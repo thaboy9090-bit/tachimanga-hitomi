@@ -52,17 +52,15 @@ jobs:
       - name: Build APKs
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew assembleDebug
 
       - name: Collect and rename APKs
         run: |
           mkdir -p repo/apk
-          for apk in $(find . -path "*/build/outputs/apk/release/*.apk" ! -name "*-unsigned*"); do
-            # Extraer lang y src del path: ./src/en/hitomi/build/...
+          for apk in $(find . -path "*/build/outputs/apk/debug/*.apk"); do
             path_parts=$(echo "$apk" | sed 's|./src/||')
             lang=$(echo "$path_parts" | cut -d'/' -f1)
             src=$(echo "$path_parts" | cut -d'/' -f2)
-            # Leer versionCode desde build.gradle
             version_code=$(grep 'extVersionCode' src/$lang/$src/build.gradle | grep -o '[0-9]*')
             version="1.4.$version_code"
             dest="repo/apk/tachiyomi-$lang.$src-v$version.apk"
