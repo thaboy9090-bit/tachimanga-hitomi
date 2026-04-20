@@ -1,0 +1,12 @@
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+ext {
+    extName = 'My Source'
+    pkgNameSuffix = 'en.mysource'
+    extClass = '.MySource'
+    extVersionCode = 1
+    // libVersion = '1.4' // optional, defaults to '1.4'
+}
+
+apply from: "$rootDir/common.gradle"
