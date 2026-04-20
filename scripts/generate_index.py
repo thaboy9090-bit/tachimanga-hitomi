@@ -15,12 +15,12 @@ SRC_DIR = "src"
 
 
 def calc_source_id(name: str, lang: str, version_id: int = 1) -> int:
-    """Calcula el ID de fuente igual que Tachiyomi HttpSource."""
+    """Calcula el ID de fuente igual que Tachiyomi HttpSource (big-endian)."""
     key = f"{name.lower()}/{lang}/{version_id}"
     digest = hashlib.md5(key.encode()).digest()
     source_id = 0
     for i in range(8):
-        source_id |= (digest[i] & 0xFF) << (8 * i)
+        source_id = (source_id << 8) | (digest[i] & 0xFF)
     return source_id & 0x7FFFFFFFFFFFFFFF
 
 
@@ -83,7 +83,7 @@ def build_index() -> list:
                 {
                     "name": ext_name,
                     "lang": lang,
-                    "id": str(source_id),
+                    "id": source_id,
                     "baseUrl": f"https://{src}.la",
                 }
             ],
