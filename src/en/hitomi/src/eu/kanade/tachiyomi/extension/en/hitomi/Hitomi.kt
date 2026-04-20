@@ -148,7 +148,9 @@ class Hitomi : HttpSource() {
             val file = files.getJSONObject(i)
             val hash = file.optString("hash")
             val name = file.optString("name")
-            Page(i, "$baseUrl/reader/$galleryId.html", buildImageUrl(hash, name, gg))
+            val hasWebp = file.optInt("haswebp") == 1
+            val hasAvif = file.optInt("hasavif") == 1
+            Page(i, "$baseUrl/reader/$galleryId.html", buildImageUrl(hash, name, hasWebp, hasAvif, gg))
         }
     }
 
@@ -237,16 +239,18 @@ class Hitomi : HttpSource() {
         return "https://tn.gold-usergeneratedcontent.net/webpbigtn/$lastChar/$dir/$hash.webp"
     }
 
-    private fun buildImageUrl(hash: String, name: String, gg: GgData): String {
+    private fun buildImageUrl(hash: String, name: String, hasWebp: Boolean, hasAvif: Boolean, gg: GgData): String {
         if (hash.isEmpty()) return ""
         val s = ggS(hash)
-        val sub = if (s in gg.mCases) "aa" else "ba"
-        val ext = name.substringAfterLast('.', "jpg")
-        val useWebp = ext.lowercase() in listOf("jpg", "jpeg", "png")
-        return if (useWebp) {
-            "https://$sub.gold-usergeneratedcontent.net/webp/${gg.b}$s/$hash.webp"
-        } else {
-            "https://$sub.gold-usergeneratedcontent.net/images/${gg.b}$s/$hash.$ext"
+        val m = if (s in gg.mCases) 0 else 1
+        val path = "${gg.b}$s/$hash"
+        return when {
+            hasWebp -> "https://w${1 + m}.gold-usergeneratedcontent.net/$path.webp"
+            hasAvif -> "https://a${1 + m}.gold-usergeneratedcontent.net/$path.avif"
+            else -> {
+                val ext = name.substringAfterLast('.', "jpg")
+                "https://${(97 + m).toChar()}b.gold-usergeneratedcontent.net/images/$path.$ext"
+            }
         }
     }
 }
