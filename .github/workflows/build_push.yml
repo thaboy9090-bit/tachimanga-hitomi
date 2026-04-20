@@ -21,7 +21,7 @@ jobs:
 
       - name: Download Gradle wrapper JAR
         run: |
-          curl -L "https://github.com/gradle/gradle/raw/v8.6.0/gradle/wrapper/gradle-wrapper.jar" \
+          curl -L "https://github.com/gradle/gradle/raw/v8.9.0/gradle/wrapper/gradle-wrapper.jar" \
             -o gradle/wrapper/gradle-wrapper.jar
 
       - name: Set up Gradle
