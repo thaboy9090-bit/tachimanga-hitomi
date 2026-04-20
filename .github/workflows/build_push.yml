@@ -34,17 +34,20 @@ jobs:
 
       - name: Generate launcher icons
         run: |
-          declare -A sizes=( [mipmap-mdpi]=48 [mipmap-hdpi]=72 [mipmap-xhdpi]=96 [mipmap-xxhdpi]=144 [mipmap-xxxhdpi]=192 )
-          for ext_dir in src/en/*/; do
-            for dpi in "${!sizes[@]}"; do
-              size=${sizes[$dpi]}
-              dir="$ext_dir/res/$dpi"
-              mkdir -p "$dir"
-              if [ ! -f "$dir/ic_launcher.png" ]; then
-                convert -size ${size}x${size} xc:#E57373 "$dir/ic_launcher.png"
-              fi
-            done
-          done
+          pip install Pillow -q
+          python3 << 'EOF'
+          from PIL import Image
+          import os, glob
+          sizes = {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}
+          for ext_dir in glob.glob('src/*/*'):
+              for dpi, size in sizes.items():
+                  path = f"{ext_dir}/res/{dpi}"
+                  os.makedirs(path, exist_ok=True)
+                  icon = f"{path}/ic_launcher.png"
+                  if not os.path.exists(icon):
+                      Image.new('RGB', (size, size), (229, 115, 115)).save(icon)
+                      print(f"Created {icon}")
+          EOF
 
       - name: Build APKs
         run: |
