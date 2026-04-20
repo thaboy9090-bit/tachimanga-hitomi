@@ -1,0 +1,54 @@
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+// Valores por defecto — cada extensión los sobreescribe en su build.gradle
+if (!project.ext.has('libVersion')) ext.libVersion = '1.4'
+if (!project.ext.has('nsfw'))       ext.nsfw = 0
+
+android {
+    compileSdk 34
+    namespace "eu.kanade.tachiyomi.extension.${pkgNameSuffix}"
+
+    defaultConfig {
+        minSdk 21
+        targetSdk 34
+        applicationId "eu.kanade.tachiyomi.extension.${pkgNameSuffix}"
+        versionCode extVersionCode
+        versionName "1.4.${extVersionCode}"
+
+        addManifestPlaceholders([
+            appName     : "Tachiyomi: ${extName}",
+            extClass    : extClass,
+            nsfw        : project.ext.nsfw,
+        ])
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            java.srcDirs    = ['src']
+            res.srcDirs     = ['res']
+            assets.srcDirs  = ['assets']
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+        freeCompilerArgs += '-opt-in=kotlinx.serialization.ExperimentalSerializationApi'
+    }
+}
+
+dependencies {
+    compileOnly "com.github.tachiyomiorg:extensions-lib:${libVersion}"
+}

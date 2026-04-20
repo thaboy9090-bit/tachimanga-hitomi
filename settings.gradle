@@ -1,0 +1,5 @@
+rootProject.name = 'tachimanga-extensions'
+
+// Agregar nuevas extensiones aquí:
+include ':src-en-hitomi'
+project(':src-en-hitomi').projectDir = new File('src/en/hitomi')
