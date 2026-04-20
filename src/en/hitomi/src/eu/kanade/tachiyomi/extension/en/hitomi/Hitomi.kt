@@ -79,7 +79,7 @@ class Hitomi : HttpSource() {
     }
 
     override fun mangaDetailsParse(response: Response): SManga {
-        val doc = Jsoup.parse(response.body.string())
+        val doc = Jsoup.parse(response.body!!.string())
         val href = doc.selectFirst("h1.lillie a")?.attr("href") ?: ""
         val id = href.substringAfterLast('-').removeSuffix(".html")
         return SManga.create().apply {
@@ -113,7 +113,7 @@ class Hitomi : HttpSource() {
     override fun chapterListRequest(manga: SManga): Request = mangaDetailsRequest(manga)
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val doc = Jsoup.parse(response.body.string())
+        val doc = Jsoup.parse(response.body!!.string())
         val href = doc.selectFirst("h1.lillie a")?.attr("href") ?: ""
         val id = href.substringAfterLast('-').removeSuffix(".html")
         val title = doc.selectFirst("h1.lillie a")?.text() ?: "Chapter 1"
@@ -135,7 +135,7 @@ class Hitomi : HttpSource() {
     }
 
     override fun pageListParse(response: Response): List<Page> {
-        val obj = parseGalleryJs(response.body.string())
+        val obj = parseGalleryJs(response.body!!.string())
         val galleryId = obj.optString("id")
         val files = obj.optJSONArray("files") ?: return emptyList()
 
@@ -179,7 +179,7 @@ class Hitomi : HttpSource() {
     }
 
     private fun nozomiParse(response: Response): MangasPage {
-        val ids = parseNozomiBinary(response.body.bytes())
+        val ids = parseNozomiBinary(response.body!!.bytes())
         val mangas = ids.map { id ->
             SManga.create().apply {
                 url = "/galleries/$id"
