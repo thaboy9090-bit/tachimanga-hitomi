@@ -56,11 +56,11 @@ class Hitomi : HttpSource() {
         val nozomiPath = when {
             query.isNotBlank() -> {
                 val tag = query.trim().lowercase().replace(" ", "_")
-                "tag/tag:$tag-english.nozomi"
+                "n/tag/$tag-english.nozomi"
             }
             typeFilter != null && typeFilter.state > 0 -> {
                 val type = typeFilter.values[typeFilter.state]
-                "type/$type-all.nozomi"
+                "n/type/$type-all.nozomi"
             }
             else -> "index-english.nozomi"
         }
@@ -206,8 +206,8 @@ class Hitomi : HttpSource() {
     private fun fetchGg(): GgData {
         val js = client.newCall(GET("$ltnUrl/gg.js", headersBuilder().build()))
             .execute().body!!.string()
-        val b = Regex("""b:'([^']+)'""").find(js)?.groupValues?.get(1) ?: ""
-        val mCases = Regex("""case (\d+):""").findAll(js)
+        val b = Regex("""b:\s*'([^']+)'""").find(js)?.groupValues?.get(1) ?: ""
+        val mCases = Regex("""case\s+(\d+):""").findAll(js)
             .map { it.groupValues[1].toInt() }.toSet()
         return GgData(b, mCases)
     }
