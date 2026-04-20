@@ -53,8 +53,16 @@ class Hitomi : HttpSource() {
         val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
         val nozomiPath = when {
             query.isNotBlank() -> {
-                val tag = query.trim().lowercase().replace(" ", "_")
-                "n/tag/$tag-english.nozomi"
+                val trimmed = query.trim().lowercase().replace('_', ' ')
+                if (trimmed.contains(':')) {
+                    val area = trimmed.substringBefore(':').trim()
+                    val tag = trimmed.substringAfter(':').trim().replace(" ", "%20")
+                    val lang = if (area == "tag") "english" else "all"
+                    "n/$area/$tag-$lang.nozomi"
+                } else {
+                    val tag = trimmed.replace(" ", "%20")
+                    "n/tag/$tag-english.nozomi"
+                }
             }
             typeFilter != null && typeFilter.state > 0 -> {
                 val type = typeFilter.values[typeFilter.state]
@@ -160,7 +168,7 @@ class Hitomi : HttpSource() {
     // ======================== Filters ========================
 
     override fun getFilterList() = FilterList(
-        Filter.Header("Buscar por tag (ej: naruto)"),
+        Filter.Header("Tag: uncensored | artist:nombre | character:nombre | series:nombre"),
         Filter.Separator(),
         Filter.Header("O filtrar por tipo:"),
         TypeFilter(),
