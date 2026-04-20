@@ -240,7 +240,7 @@ class Hitomi : HttpSource() {
     private fun buildImageUrl(hash: String, name: String, gg: GgData): String {
         if (hash.isEmpty()) return ""
         val s = ggS(hash)
-        val sub = if (s in gg.mCases) "ba" else "aa"
+        val sub = if (s in gg.mCases) "aa" else "ba"
         val ext = name.substringAfterLast('.', "jpg")
         val useWebp = ext.lowercase() in listOf("jpg", "jpeg", "png")
         return if (useWebp) {
