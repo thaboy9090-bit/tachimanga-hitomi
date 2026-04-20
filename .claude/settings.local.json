@@ -10,7 +10,9 @@
       "WebFetch(domain:master.hitomi.la)",
       "WebFetch(domain:ltn.gold-usergeneratedcontent.net)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(python3 -c ' *)",
+      "Bash(grep -n \"fetchGg\\\\|ggS\\\\|galleryinfo\\\\|b:\\\\\\\\\\\\\\\\s\\\\*\" src/en/hitomi/src/eu/kanade/tachiyomi/extension/en/hitomi/Hitomi.kt)"
     ]
   }
 }
