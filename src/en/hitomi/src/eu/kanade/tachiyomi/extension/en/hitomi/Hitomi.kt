@@ -131,12 +131,16 @@ class Hitomi : HttpSource() {
 
     override fun pageListRequest(chapter: SChapter): Request {
         val id = chapter.url.removePrefix("/reader/").removeSuffix(".html")
-        return GET("$ltnUrl/galleries/$id.js", headersBuilder().build())
+        return GET(
+            "$ltnUrl/galleries/$id.js",
+            headersBuilder().set("Referer", "$baseUrl/reader/$id.html").build(),
+        )
     }
 
     override fun pageListParse(response: Response): List<Page> {
         val gg = fetchGg()
-        val obj = parseGalleryJs(response.body!!.string())
+        val js = response.body!!.string()
+        val obj = parseGalleryJs(js)
         val galleryId = obj.optString("id")
         val files = obj.optJSONArray("files") ?: return emptyList()
 
@@ -198,14 +202,21 @@ class Hitomi : HttpSource() {
         return ids
     }
 
-    private fun parseGalleryJs(js: String): JSONObject =
-        JSONObject(js.removePrefix("var galleryinfo = ").trimEnd(';'))
+    private fun parseGalleryJs(js: String): JSONObject {
+        val cleaned = js.trim()
+            .removePrefix("var galleryinfo = ")
+            .removePrefix("let galleryinfo = ")
+            .removePrefix("const galleryinfo = ")
+            .trimEnd(';', '\n', '\r', ' ')
+        return JSONObject(cleaned)
+    }
 
     private data class GgData(val b: String, val mCases: Set<Int>)
 
     private fun fetchGg(): GgData {
-        val js = client.newCall(GET("$ltnUrl/gg.js", headersBuilder().build()))
-            .execute().body!!.string()
+        val js = client.newCall(
+            GET("$ltnUrl/gg.js", headersBuilder().set("Referer", baseUrl).build()),
+        ).execute().body?.string() ?: return GgData("", emptySet())
         val b = Regex("""b:\s*'([^']+)'""").find(js)?.groupValues?.get(1) ?: ""
         val mCases = Regex("""case\s+(\d+):""").findAll(js)
             .map { it.groupValues[1].toInt() }.toSet()
