@@ -28,7 +28,9 @@ jobs:
           python-version: '3.11'
 
       - name: Build APKs
-        run: ./gradlew assembleRelease
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease
 
       - name: Collect and rename APKs
         run: |
