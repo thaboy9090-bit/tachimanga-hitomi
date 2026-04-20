@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.extension.en.hitomi
 
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.asObservableSuccess
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -15,7 +14,6 @@ import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.Jsoup
-import rx.Observable
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -35,29 +33,23 @@ class Hitomi : HttpSource() {
 
     // ======================== Popular ========================
 
-    override fun fetchPopularManga(page: Int): Observable<MangasPage> =
-        fetchFromNozomi("index-english.nozomi", page)
-
     override fun popularMangaRequest(page: Int): Request =
         nozomiRequest("index-english.nozomi", page)
 
     override fun popularMangaParse(response: Response): MangasPage =
-        throw UnsupportedOperationException()
+        nozomiParse(response)
 
     // ======================== Latest ========================
-
-    override fun fetchLatestUpdates(page: Int): Observable<MangasPage> =
-        fetchFromNozomi("index-english.nozomi", page)
 
     override fun latestUpdatesRequest(page: Int): Request =
         nozomiRequest("index-english.nozomi", page)
 
     override fun latestUpdatesParse(response: Response): MangasPage =
-        throw UnsupportedOperationException()
+        nozomiParse(response)
 
     // ======================== Search ========================
 
-    override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
+    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
         val nozomiPath = when {
             query.isNotBlank() -> {
@@ -70,14 +62,11 @@ class Hitomi : HttpSource() {
             }
             else -> "index-english.nozomi"
         }
-        return fetchFromNozomi(nozomiPath, page)
+        return nozomiRequest(nozomiPath, page)
     }
 
-    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request =
-        throw UnsupportedOperationException()
-
     override fun searchMangaParse(response: Response): MangasPage =
-        throw UnsupportedOperationException()
+        nozomiParse(response)
 
     // ======================== Details ========================
 
@@ -184,25 +173,15 @@ class Hitomi : HttpSource() {
 
     // ======================== Helpers ========================
 
-    private fun fetchFromNozomi(path: String, page: Int): Observable<MangasPage> {
-        return client.newCall(nozomiRequest(path, page))
-            .asObservableSuccess()
-            .flatMap { response ->
-                val ids = parseNozomiBinary(response.body!!.bytes())
-                val hasMore = ids.size == pageSize
-                Observable.from(ids)
-                    .flatMap(
-                        { id ->
-                            client.newCall(
-                                GET("$ltnUrl/galleryblock/$id.html", headersBuilder().build()),
-                            ).asObservableSuccess()
-                                .map { r -> parseGalleryBlock(id, r) }
-                        },
-                        pageSize,
-                    )
-                    .toList()
-                    .map { mangas -> MangasPage(mangas, hasMore) }
-            }
+    private fun nozomiParse(response: Response): MangasPage {
+        val ids = parseNozomiBinary(response.body!!.bytes())
+        val mangas = ids.map { id ->
+            val blockResp = client.newCall(
+                GET("$ltnUrl/galleryblock/$id.html", headersBuilder().build()),
+            ).execute()
+            parseGalleryBlock(id, blockResp)
+        }
+        return MangasPage(mangas, ids.size == pageSize)
     }
 
     private fun parseGalleryBlock(id: Int, response: Response): SManga {
