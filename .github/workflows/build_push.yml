@@ -32,6 +32,20 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Generate launcher icons
+        run: |
+          declare -A sizes=( [mipmap-mdpi]=48 [mipmap-hdpi]=72 [mipmap-xhdpi]=96 [mipmap-xxhdpi]=144 [mipmap-xxxhdpi]=192 )
+          for ext_dir in src/en/*/; do
+            for dpi in "${!sizes[@]}"; do
+              size=${sizes[$dpi]}
+              dir="$ext_dir/res/$dpi"
+              mkdir -p "$dir"
+              if [ ! -f "$dir/ic_launcher.png" ]; then
+                convert -size ${size}x${size} xc:#E57373 "$dir/ic_launcher.png"
+              fi
+            done
+          done
+
       - name: Build APKs
         run: |
           chmod +x gradlew
