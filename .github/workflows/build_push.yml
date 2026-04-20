@@ -1,0 +1,60 @@
+name: Build and Publish Extensions
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Grant execute permission to gradlew
+        run: chmod +x gradlew
+
+      - name: Build APKs
+        run: ./gradlew assembleRelease
+
+      - name: Collect and rename APKs
+        run: |
+          mkdir -p repo/apk
+          for apk in $(find . -path "*/build/outputs/apk/release/*.apk" ! -name "*-unsigned*"); do
+            # Extraer lang y src del path: ./src/en/hitomi/build/...
+            path_parts=$(echo "$apk" | sed 's|./src/||')
+            lang=$(echo "$path_parts" | cut -d'/' -f1)
+            src=$(echo "$path_parts" | cut -d'/' -f2)
+            # Leer versionCode desde build.gradle
+            version_code=$(grep 'extVersionCode' src/$lang/$src/build.gradle | grep -o '[0-9]*')
+            version="1.4.$version_code"
+            dest="repo/apk/tachiyomi-$lang.$src-v$version.apk"
+            cp "$apk" "$dest"
+            echo "Copied: $apk → $dest"
+          done
+
+      - name: Generate index.min.json
+        run: python scripts/generate_index.py
+
+      - name: Deploy to repo branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: repo
+          publish_dir: ./repo
+          force_orphan: false
+          keep_files: true
+          commit_message: "Update repo [skip ci]"
