@@ -6,7 +6,11 @@
       "Bash(gh api *)",
       "Bash(python -c \"import sys,json; [print\\(b['name']\\) for b in json.load\\(sys.stdin\\)]\")",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:jitpack.io)"
+      "WebFetch(domain:jitpack.io)",
+      "WebFetch(domain:master.hitomi.la)",
+      "WebFetch(domain:ltn.gold-usergeneratedcontent.net)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
