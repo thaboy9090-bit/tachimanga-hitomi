@@ -135,6 +135,7 @@ class Hitomi : HttpSource() {
     }
 
     override fun pageListParse(response: Response): List<Page> {
+        val gg = fetchGg()
         val obj = parseGalleryJs(response.body!!.string())
         val galleryId = obj.optString("id")
         val files = obj.optJSONArray("files") ?: return emptyList()
@@ -143,7 +144,7 @@ class Hitomi : HttpSource() {
             val file = files.getJSONObject(i)
             val hash = file.optString("hash")
             val name = file.optString("name")
-            Page(i, "$baseUrl/reader/$galleryId.html", buildImageUrl(hash, name))
+            Page(i, "$baseUrl/reader/$galleryId.html", buildImageUrl(hash, name, gg))
         }
     }
 
@@ -200,6 +201,24 @@ class Hitomi : HttpSource() {
     private fun parseGalleryJs(js: String): JSONObject =
         JSONObject(js.removePrefix("var galleryinfo = ").trimEnd(';'))
 
+    private data class GgData(val b: String, val mCases: Set<Int>)
+
+    private fun fetchGg(): GgData {
+        val js = client.newCall(GET("$ltnUrl/gg.js", headersBuilder().build()))
+            .execute().body!!.string()
+        val b = Regex("""b:'([^']+)'""").find(js)?.groupValues?.get(1) ?: ""
+        val mCases = Regex("""case (\d+):""").findAll(js)
+            .map { it.groupValues[1].toInt() }.toSet()
+        return GgData(b, mCases)
+    }
+
+    private fun ggS(hash: String): Int {
+        val last3 = hash.takeLast(3)
+        val g2 = last3.last().toString()
+        val g1 = last3.dropLast(1)
+        return (g2 + g1).toInt(16)
+    }
+
     private fun buildThumbnailUrl(hash: String): String {
         if (hash.length < 3) return ""
         val lastChar = hash.last()
@@ -207,17 +226,16 @@ class Hitomi : HttpSource() {
         return "https://tn.gold-usergeneratedcontent.net/webpbigtn/$lastChar/$dir/$hash.webp"
     }
 
-    private fun buildImageUrl(hash: String, name: String): String {
+    private fun buildImageUrl(hash: String, name: String, gg: GgData): String {
         if (hash.isEmpty()) return ""
+        val s = ggS(hash)
+        val sub = if (s in gg.mCases) "ba" else "aa"
         val ext = name.substringAfterLast('.', "jpg")
         val useWebp = ext.lowercase() in listOf("jpg", "jpeg", "png")
-        val hashNum = hash.takeLast(3).toIntOrNull(16) ?: 0
-        val sub = "${'a' + hashNum % 3}a"
-        val pathPart = "${hash.last()}/${hash.takeLast(3).dropLast(1)}/$hash"
         return if (useWebp) {
-            "https://$sub.gold-usergeneratedcontent.net/webp/$pathPart.webp"
+            "https://$sub.gold-usergeneratedcontent.net/webp/${gg.b}$s/$hash.webp"
         } else {
-            "https://$sub.gold-usergeneratedcontent.net/images/$pathPart/$name"
+            "https://$sub.gold-usergeneratedcontent.net/images/${gg.b}$s/$hash.$ext"
         }
     }
 }
