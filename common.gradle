@@ -2,7 +2,7 @@ apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
 // Valores por defecto — cada extensión los sobreescribe en su build.gradle
-if (!project.ext.has('libVersion')) ext.libVersion = '1.5'
+if (!project.ext.has('libVersion')) ext.libVersion = '1.6.0-rc1'
 if (!project.ext.has('nsfw'))       ext.nsfw = 0
 
 android {
