@@ -397,7 +397,7 @@ class Hitomi : HttpSource() {
     private fun buildImageUrl(hash: String, name: String, hasWebp: Boolean, hasAvif: Boolean, gg: GgData): String {
         if (hash.isEmpty()) return ""
         val s = ggS(hash)
-        val m = if (s in gg.mCases) 1 else 0
+        val m = if (s in gg.mCases) 0 else 1
         val path = "${gg.b}$s/$hash"
         return when {
             hasWebp -> "https://w${1 + m}.gold-usergeneratedcontent.net/$path.webp"
