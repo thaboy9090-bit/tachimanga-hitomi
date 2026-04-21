@@ -134,7 +134,7 @@ class Hitomi : HttpSource() {
 
             var resultIds: Set<Int>? = null
             for (word in words) {
-                val key = md.digest(word.toByteArray(Charsets.UTF_8)).take(4).toByteArray()
+                val key = md.digest(word.toByteArray(Charsets.UTF_8))
                 val dataRef = bTreeNodeSearch(indexUrl, key)
                 if (dataRef == null) return emptyList()
                 val wordIds = fetchAllIds(dataUrl, dataRef.first, dataRef.second)
@@ -409,31 +409,33 @@ class Hitomi : HttpSource() {
     private fun bTreeNodeSearch(indexUrl: String, key: ByteArray): Pair<Long, Int>? {
         var nodeAddress = 0L
         repeat(64) {
-            val nodeData = fetchRange(indexUrl, nodeAddress, nodeAddress + 463) ?: return null
+            // Fetch enough bytes for a full node (max: 4 + 16*(4+32) + 4 + 16*12 + 17*8 = 912)
+            val nodeData = fetchRange(indexUrl, nodeAddress, nodeAddress + 911) ?: return null
             val buf = ByteBuffer.wrap(nodeData).order(ByteOrder.BIG_ENDIAN)
 
             val numKeys = buf.int
             if (numKeys == 0) return null
 
-            // Fixed 16 key slots: each slot = 4 bytes (size) + 4 bytes (key data)
+            // Read exactly numKeys variable-length key entries
             val keys = mutableListOf<ByteArray>()
-            for (i in 0 until 16) {
-                val size = buf.int
-                val keyData = ByteArray(4)
+            for (i in 0 until numKeys) {
+                val keySize = buf.int
+                if (keySize <= 0 || keySize > 32) return null
+                val keyData = ByteArray(keySize)
                 buf.get(keyData)
-                if (i < numKeys && size > 0) keys.add(keyData.take(size).toByteArray())
+                keys.add(keyData)
             }
 
-            // Fixed 16 data slots: each = 8 bytes (offset) + 4 bytes (length)
+            // Read exactly numDatas data entries (8-byte offset + 4-byte length each)
             val numDatas = buf.int
             val datas = mutableListOf<Pair<Long, Int>>()
-            for (i in 0 until 16) {
+            for (i in 0 until numDatas) {
                 val offset = buf.long
                 val length = buf.int
-                if (i < numDatas) datas.add(Pair(offset, length))
+                datas.add(Pair(offset, length))
             }
 
-            // 17 subnode addresses (B+1)
+            // Always B+1 = 17 subnode addresses
             val subnodes = (0..16).map { buf.long }
 
             var nextAddr = 0L
