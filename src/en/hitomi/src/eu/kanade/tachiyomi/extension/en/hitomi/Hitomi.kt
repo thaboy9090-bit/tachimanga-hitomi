@@ -94,7 +94,14 @@ class Hitomi : HttpSource() {
                                 headersBuilder().add("Range", "bytes=0-3").build(),
                             )
                         }
-                        resolveTagPath(q)
+                        val rawPath = resolveTagPath(q)
+                        if (sortPrefix.isEmpty()) {
+                            rawPath
+                        } else {
+                            val slash = rawPath.indexOf('/')
+                            if (slash >= 0) rawPath.substring(0, slash + 1) + sortPrefix + rawPath.substring(slash + 1)
+                            else rawPath
+                        }
                     }
                 }
                 return nozomiRequest(nozomiPath, page)
@@ -206,15 +213,10 @@ class Hitomi : HttpSource() {
             artist = doc.select(".artist-list li a").joinToString { it.text() }
             author = artist
             genre = doc.select(".relatedtags li a").joinToString { el ->
-                val tag = java.net.URLDecoder.decode(
+                java.net.URLDecoder.decode(
                     el.attr("href").removePrefix("/tag/").removeSuffix("-all.html"),
                     "UTF-8",
                 )
-                when {
-                    tag.startsWith("female:") -> tag.removePrefix("female:")
-                    tag.startsWith("male:") -> tag.removePrefix("male:")
-                    else -> tag
-                }
             }
             description = buildString {
                 doc.select(".series-list li a").firstOrNull()?.text()
