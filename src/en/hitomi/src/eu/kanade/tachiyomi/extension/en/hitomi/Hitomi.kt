@@ -99,25 +99,32 @@ class Hitomi : HttpSource() {
 
     private fun titleSearch(query: String, page: Int): List<Int>? {
         try {
-            val encoded = query.replace(" ", "_").replace("/", "slash").replace(".", "dot")
-            val path = encoded.map { it.toString() }.joinToString("/")
-            val resp = client.newCall(
-                GET(
-                    "https://tagindex.hitomi.la/galleries/$path.json",
-                    headersBuilder().set("Referer", baseUrl).build(),
-                ),
-            ).execute()
-            if (resp.isSuccessful) {
-                val arr = org.json.JSONArray(resp.body?.string() ?: "[]")
-                if (arr.length() > 0) {
-                    val item = arr.getJSONArray(0)
-                    val name = item.getString(0)
-                    val namespace = item.getString(2)
-                    if (namespace == "galleries") {
-                        return galleriesBTreeSearch(name, page)
-                    }
-                }
+            val words = query.trim().lowercase().split("\\s+".toRegex()).filter { it.isNotEmpty() }
+            if (words.isEmpty()) return null
+
+            val ts = System.currentTimeMillis()
+            val version = client.newCall(
+                GET("$ltnHitomiUrl/galleriesindex/version?_=$ts", headersBuilder().build()),
+            ).execute().body?.string()?.trim() ?: return null
+
+            val indexUrl = "$ltnHitomiUrl/galleriesindex/galleries.$version.index"
+            val dataUrl = "$ltnHitomiUrl/galleriesindex/galleries.$version.data"
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+
+            var resultIds: Set<Int>? = null
+            for (word in words) {
+                val key = md.digest(word.toByteArray(Charsets.UTF_8)).take(4).toByteArray()
+                val dataRef = bTreeNodeSearch(indexUrl, key)
+                if (dataRef == null) return emptyList()
+                val wordIds = fetchAllIds(dataUrl, dataRef.first, dataRef.second)
+                resultIds = if (resultIds == null) wordIds.toHashSet()
+                            else resultIds intersect wordIds.toHashSet()
+                if (resultIds.isEmpty()) return emptyList()
             }
+
+            val allIds = resultIds?.toList() ?: return null
+            val start = (page - 1) * pageSize
+            return allIds.drop(start).take(pageSize)
         } catch (_: Exception) {}
         return null
     }
@@ -358,28 +365,6 @@ class Hitomi : HttpSource() {
 
     // ======================== B-Tree Title Search ========================
 
-    private fun galleriesBTreeSearch(term: String, page: Int): List<Int>? {
-        try {
-            val ts = System.currentTimeMillis()
-            val version = client.newCall(
-                GET(
-                    "$ltnHitomiUrl/galleriesindex/version?_=$ts",
-                    headersBuilder().build(),
-                ),
-            ).execute().body?.string()?.trim() ?: return null
-
-            val indexUrl = "$ltnHitomiUrl/galleriesindex/galleries.$version.index"
-            val dataUrl = "$ltnHitomiUrl/galleriesindex/galleries.$version.data"
-
-            val md = java.security.MessageDigest.getInstance("SHA-256")
-            val key = md.digest(term.toByteArray(Charsets.UTF_8)).take(4).toByteArray()
-
-            val dataRef = bTreeNodeSearch(indexUrl, key) ?: return null
-            return fetchPagedIds(dataUrl, dataRef.first, dataRef.second, page)
-        } catch (_: Exception) {}
-        return null
-    }
-
     private fun fetchRange(url: String, start: Long, end: Long): ByteArray? {
         val resp = client.newCall(
             GET(url, headersBuilder().add("Range", "bytes=$start-$end").build()),
@@ -432,18 +417,10 @@ class Hitomi : HttpSource() {
         return null
     }
 
-    private fun fetchPagedIds(dataUrl: String, offset: Long, length: Int, page: Int): List<Int> {
-        val countBytes = fetchRange(dataUrl, offset, offset + 3) ?: return emptyList()
-        val total = ByteBuffer.wrap(countBytes).order(ByteOrder.BIG_ENDIAN).int
-        if (total == 0) return emptyList()
-
-        val skip = (page - 1).toLong() * pageSize
-        val idsStart = offset + 4 + skip * 4
-        val idsEnd = minOf(idsStart + pageSize.toLong() * 4 - 1, offset + length - 1)
-        if (idsStart > offset + length - 1) return emptyList()
-
-        val data = fetchRange(dataUrl, idsStart, idsEnd) ?: return emptyList()
+    private fun fetchAllIds(dataUrl: String, offset: Long, length: Int): List<Int> {
+        val data = fetchRange(dataUrl, offset, offset + length - 1) ?: return emptyList()
         val buf = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
+        buf.int // skip total count
         return buildList { while (buf.remaining() >= 4) add(buf.int) }
     }
 
