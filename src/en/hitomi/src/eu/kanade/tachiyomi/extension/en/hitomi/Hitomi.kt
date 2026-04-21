@@ -250,7 +250,10 @@ class Hitomi : HttpSource() {
                 name = title
                 url = "/reader/$id.html"
                 chapter_number = 1f
-                date_upload = 0L
+                date_upload = try {
+                    val dateText = doc.selectFirst("p.dj-date")?.text()?.trim() ?: ""
+                    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ssX", java.util.Locale.ENGLISH).parse(dateText)?.time ?: 0L
+                } catch (_: Exception) { 0L }
             }
         )
     }
