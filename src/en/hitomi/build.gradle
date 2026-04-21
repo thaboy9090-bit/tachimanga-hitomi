@@ -1,7 +1,7 @@
 ext {
     extName = 'Hitomi.la'
     extClass = '.Hitomi'
-    extVersionCode = 35
+    extVersionCode = 36
     pkgNameSuffix = 'en.hitomi'
     nsfw = 1
 }
