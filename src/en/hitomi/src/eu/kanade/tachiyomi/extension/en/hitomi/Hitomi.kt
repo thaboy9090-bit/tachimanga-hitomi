@@ -223,6 +223,7 @@ class Hitomi : HttpSource() {
             update_strategy = UpdateStrategy.ONLY_FETCH_ONCE
             thumbnail_url = doc.selectFirst(".dj-img1 img")?.attr("data-src")
                 ?.let { if (it.startsWith("//")) "https:$it" else it }
+                ?.replace("//tn.hitomi.la/", "//tn.gold-usergeneratedcontent.net/")
         }
     }
 
@@ -338,6 +339,7 @@ class Hitomi : HttpSource() {
             title = doc.selectFirst("h1.lillie a")?.text() ?: "Gallery #$id"
             thumbnail_url = doc.selectFirst(".dj-img1 img")?.attr("data-src")
                 ?.let { if (it.startsWith("//")) "https:$it" else it }
+                ?.replace("//tn.hitomi.la/", "//tn.gold-usergeneratedcontent.net/")
         }
     }
 
