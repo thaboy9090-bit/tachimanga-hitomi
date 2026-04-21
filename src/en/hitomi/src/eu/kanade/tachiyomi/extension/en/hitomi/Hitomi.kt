@@ -184,12 +184,17 @@ class Hitomi : HttpSource() {
 
     private fun nozomiParse(response: Response): MangasPage {
         val ids = parseNozomiBinary(response.body!!.bytes())
-        val mangas = ids.map { id ->
-            val blockResp = client.newCall(
-                GET("$ltnUrl/galleryblock/$id.html", headersBuilder().build()),
-            ).execute()
-            parseGalleryBlock(id, blockResp)
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(minOf(ids.size, 5))
+        val futures = ids.map { id ->
+            executor.submit<SManga> {
+                val blockResp = client.newCall(
+                    GET("$ltnUrl/galleryblock/$id.html", headersBuilder().build()),
+                ).execute()
+                parseGalleryBlock(id, blockResp)
+            }
         }
+        val mangas = futures.map { it.get() }
+        executor.shutdown()
         return MangasPage(mangas, ids.size == pageSize)
     }
 
