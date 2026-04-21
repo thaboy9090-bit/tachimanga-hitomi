@@ -54,7 +54,18 @@ class Hitomi : HttpSource() {
     // ======================== Search ========================
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+        val langFilter = filters.filterIsInstance<LanguageFilter>().firstOrNull()
+        val sortFilter = filters.filterIsInstance<SortFilter>().firstOrNull()
         val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
+
+        val lang = when (langFilter?.state ?: 0) {
+            1 -> "english"
+            2 -> "spanish"
+            3 -> "chinese"
+            4 -> "japanese"
+            else -> "all"
+        }
+
         when {
             query.isNotBlank() -> {
                 val q = query.trim().lowercase().replace('_', ' ')
@@ -84,7 +95,17 @@ class Hitomi : HttpSource() {
                 val type = typeFilter.values[typeFilter.state]
                 return nozomiRequest("type/$type-all.nozomi", page)
             }
-            else -> return nozomiRequest("index-all.nozomi", page)
+            else -> {
+                val path = when (sortFilter?.state ?: 0) {
+                    1 -> "date/published-$lang.nozomi"
+                    2 -> "popular/today-$lang.nozomi"
+                    3 -> "popular/week-$lang.nozomi"
+                    4 -> "popular/month-$lang.nozomi"
+                    5 -> "popular/year-$lang.nozomi"
+                    else -> "index-$lang.nozomi"
+                }
+                return nozomiRequest(path, page)
+            }
         }
     }
 
@@ -260,8 +281,21 @@ class Hitomi : HttpSource() {
         Filter.Header("Sintaxis: female:big ass | male:shotacon | artist:nombre"),
         Filter.Header("character:nombre | series:nombre | type:doujinshi"),
         Filter.Separator(),
+        LanguageFilter(),
+        SortFilter(),
+        Filter.Separator(),
         Filter.Header("O filtrar por tipo:"),
         TypeFilter(),
+    )
+
+    class LanguageFilter : Filter.Select<String>(
+        "Idioma",
+        arrayOf("Todos", "English", "Spanish", "Chinese", "Japanese"),
+    )
+
+    class SortFilter : Filter.Select<String>(
+        "Ordenar por",
+        arrayOf("Date Added", "Date Published", "Popular: Today", "Popular: Week", "Popular: Month", "Popular: Year"),
     )
 
     class TypeFilter : Filter.Select<String>(
