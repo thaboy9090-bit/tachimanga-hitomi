@@ -25,7 +25,11 @@ class Hitomi : HttpSource() {
     override val supportsLatest = true
 
     private val ltnUrl = "https://ltn.gold-usergeneratedcontent.net"
+    private val ltnHitomiUrl = "https://ltn.hitomi.la"
     private val pageSize = 25
+
+    @Volatile
+    private var pendingIds: List<Int>? = null
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", baseUrl)
@@ -51,10 +55,10 @@ class Hitomi : HttpSource() {
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
-        val nozomiPath = when {
+        when {
             query.isNotBlank() -> {
                 val q = query.trim().lowercase().replace('_', ' ')
-                when {
+                val nozomiPath = when {
                     q.startsWith("female:") || q.startsWith("male:") ->
                         "tag/${q.replace(" ", "%20")}-all.nozomi"
                     q.contains(':') -> {
@@ -62,16 +66,60 @@ class Hitomi : HttpSource() {
                         val tag = q.substringAfter(':').trim().replace(" ", "%20")
                         "$area/$tag-all.nozomi"
                     }
-                    else -> resolveTagPath(q)
+                    else -> {
+                        val ids = titleSearch(q, page)
+                        if (ids != null) {
+                            pendingIds = ids
+                            return GET(
+                                "$ltnUrl/index-all.nozomi",
+                                headersBuilder().add("Range", "bytes=0-3").build(),
+                            )
+                        }
+                        resolveTagPath(q)
+                    }
                 }
+                return nozomiRequest(nozomiPath, page)
             }
             typeFilter != null && typeFilter.state > 0 -> {
                 val type = typeFilter.values[typeFilter.state]
-                "type/$type-all.nozomi"
+                return nozomiRequest("type/$type-all.nozomi", page)
             }
-            else -> "index-all.nozomi"
+            else -> return nozomiRequest("index-all.nozomi", page)
         }
-        return nozomiRequest(nozomiPath, page)
+    }
+
+    override fun searchMangaParse(response: Response): MangasPage {
+        val ids = pendingIds
+        if (ids != null) {
+            pendingIds = null
+            return idsToMangasPage(ids)
+        }
+        return nozomiParse(response)
+    }
+
+    private fun titleSearch(query: String, page: Int): List<Int>? {
+        try {
+            val encoded = query.replace(" ", "_").replace("/", "slash").replace(".", "dot")
+            val path = encoded.map { it.toString() }.joinToString("/")
+            val resp = client.newCall(
+                GET(
+                    "https://tagindex.hitomi.la/galleries/$path.json",
+                    headersBuilder().set("Referer", baseUrl).build(),
+                ),
+            ).execute()
+            if (resp.isSuccessful) {
+                val arr = org.json.JSONArray(resp.body?.string() ?: "[]")
+                if (arr.length() > 0) {
+                    val item = arr.getJSONArray(0)
+                    val name = item.getString(0)
+                    val namespace = item.getString(2)
+                    if (namespace == "galleries") {
+                        return galleriesBTreeSearch(name, page)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return null
     }
 
     private fun resolveTagPath(query: String): String {
@@ -100,9 +148,6 @@ class Hitomi : HttpSource() {
         } catch (_: Exception) {}
         return "tag/${query.replace(" ", "%20")}-all.nozomi"
     }
-
-    override fun searchMangaParse(response: Response): MangasPage =
-        nozomiParse(response)
 
     // ======================== Details ========================
 
@@ -219,8 +264,8 @@ class Hitomi : HttpSource() {
 
     // ======================== Helpers ========================
 
-    private fun nozomiParse(response: Response): MangasPage {
-        val ids = parseNozomiBinary(response.body!!.bytes())
+    private fun idsToMangasPage(ids: List<Int>): MangasPage {
+        if (ids.isEmpty()) return MangasPage(emptyList(), false)
         val executor = java.util.concurrent.Executors.newFixedThreadPool(minOf(ids.size, 5))
         val futures = ids.map { id ->
             executor.submit<SManga> {
@@ -232,7 +277,14 @@ class Hitomi : HttpSource() {
         }
         val mangas = futures.map { it.get() }
         executor.shutdown()
-        return MangasPage(mangas, ids.size == pageSize)
+        return MangasPage(mangas, mangas.size >= pageSize)
+    }
+
+    private fun nozomiParse(response: Response): MangasPage {
+        val ids = parseNozomiBinary(response.body!!.bytes())
+        return idsToMangasPage(ids).let {
+            MangasPage(it.mangas, ids.size == pageSize)
+        }
     }
 
     private fun parseGalleryBlock(id: Int, response: Response): SManga {
@@ -302,5 +354,91 @@ class Hitomi : HttpSource() {
                 "https://${(97 + m).toChar()}b.gold-usergeneratedcontent.net/images/$path.$ext"
             }
         }
+    }
+
+    // ======================== B-Tree Title Search ========================
+
+    private fun galleriesBTreeSearch(term: String, page: Int): List<Int>? {
+        try {
+            val ts = System.currentTimeMillis()
+            val version = client.newCall(
+                GET(
+                    "$ltnHitomiUrl/galleriesindex/version?_=$ts",
+                    headersBuilder().build(),
+                ),
+            ).execute().body?.string()?.trim() ?: return null
+
+            val indexUrl = "$ltnHitomiUrl/galleriesindex/galleries.$version.index"
+            val dataUrl = "$ltnHitomiUrl/galleriesindex/galleries.$version.data"
+
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            val key = md.digest(term.toByteArray(Charsets.UTF_8)).take(4).toByteArray()
+
+            val dataRef = bTreeNodeSearch(indexUrl, key) ?: return null
+            return fetchPagedIds(dataUrl, dataRef.first, dataRef.second, page)
+        } catch (_: Exception) {}
+        return null
+    }
+
+    private fun fetchRange(url: String, start: Long, end: Long): ByteArray? {
+        val resp = client.newCall(
+            GET(url, headersBuilder().add("Range", "bytes=$start-$end").build()),
+        ).execute()
+        return if (resp.isSuccessful || resp.code == 206) resp.body?.bytes() else null
+    }
+
+    private fun bTreeNodeSearch(indexUrl: String, key: ByteArray): Pair<Long, Int>? {
+        var nodeAddress = 0L
+        repeat(64) {
+            val nodeData = fetchRange(indexUrl, nodeAddress, nodeAddress + 463) ?: return null
+            val buf = ByteBuffer.wrap(nodeData).order(ByteOrder.BIG_ENDIAN)
+
+            val numKeys = buf.int
+            if (numKeys == 0) return null
+
+            val keys = (0 until numKeys).map {
+                val size = buf.int
+                ByteArray(size).also { buf.get(it) }
+            }
+            val numDatas = buf.int
+            val datas = (0 until numDatas).map { Pair(buf.long, buf.int) }
+            val subnodes = (0..16).map { buf.long }
+
+            var nextAddr = 0L
+            for (i in keys.indices) {
+                val cmp = compareByteArrays(key, keys[i])
+                when {
+                    cmp == 0 -> return datas.getOrNull(i)
+                    cmp < 0 -> { nextAddr = subnodes.getOrElse(i) { 0L }; break }
+                    i == keys.lastIndex -> nextAddr = subnodes.getOrElse(i + 1) { 0L }
+                }
+            }
+            if (nextAddr == 0L) return null
+            nodeAddress = nextAddr
+        }
+        return null
+    }
+
+    private fun fetchPagedIds(dataUrl: String, offset: Long, length: Int, page: Int): List<Int> {
+        val countBytes = fetchRange(dataUrl, offset, offset + 3) ?: return emptyList()
+        val total = ByteBuffer.wrap(countBytes).order(ByteOrder.BIG_ENDIAN).int
+        if (total == 0) return emptyList()
+
+        val skip = (page - 1).toLong() * pageSize
+        val idsStart = offset + 4 + skip * 4
+        val idsEnd = minOf(idsStart + pageSize.toLong() * 4 - 1, offset + length - 1)
+        if (idsStart > offset + length - 1) return emptyList()
+
+        val data = fetchRange(dataUrl, idsStart, idsEnd) ?: return emptyList()
+        val buf = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
+        return buildList { while (buf.remaining() >= 4) add(buf.int) }
+    }
+
+    private fun compareByteArrays(a: ByteArray, b: ByteArray): Int {
+        for (i in 0 until minOf(a.size, b.size)) {
+            val diff = (a[i].toInt() and 0xFF) - (b[i].toInt() and 0xFF)
+            if (diff != 0) return diff
+        }
+        return a.size - b.size
     }
 }
