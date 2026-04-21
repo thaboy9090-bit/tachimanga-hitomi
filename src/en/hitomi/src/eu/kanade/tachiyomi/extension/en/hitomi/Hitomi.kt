@@ -269,7 +269,7 @@ class Hitomi : HttpSource() {
             }
             status = SManga.COMPLETED
             update_strategy = UpdateStrategy.ONLY_FETCH_ONCE
-            thumbnail_url = doc.selectFirst(".dj-img1 img")?.attr("data-src")
+            thumbnail_url = doc.selectFirst(".dj-img1 img, .cg-img1 img")?.attr("data-src")
                 ?.let { if (it.startsWith("//")) "https:$it" else it }
                 ?.replace("//tn.hitomi.la/", "//tn.gold-usergeneratedcontent.net/")
         }
@@ -290,7 +290,7 @@ class Hitomi : HttpSource() {
                 url = "/reader/$id.html"
                 chapter_number = 1f
                 date_upload = try {
-                    val dateText = doc.selectFirst("p.dj-date")?.text()?.trim() ?: ""
+                    val dateText = doc.selectFirst("p.dj-date, p.cg-date")?.text()?.trim() ?: ""
                     java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ssX", java.util.Locale.ENGLISH).parse(dateText)?.time ?: 0L
                 } catch (_: Exception) { 0L }
             }
@@ -401,7 +401,7 @@ class Hitomi : HttpSource() {
         return SManga.create().apply {
             url = "/galleries/$id"
             title = doc.selectFirst("h1.lillie a")?.text() ?: "Gallery #$id"
-            thumbnail_url = doc.selectFirst(".dj-img1 img")?.attr("data-src")
+            thumbnail_url = doc.selectFirst(".dj-img1 img, .cg-img1 img")?.attr("data-src")
                 ?.let { if (it.startsWith("//")) "https:$it" else it }
                 ?.replace("//tn.hitomi.la/", "//tn.gold-usergeneratedcontent.net/")
         }
