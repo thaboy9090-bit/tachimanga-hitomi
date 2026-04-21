@@ -258,7 +258,14 @@ class Hitomi : HttpSource() {
 
     override fun pageListParse(response: Response): List<Page> {
         val gg = fetchGg()
-        val js = response.body!!.string()
+        val js = if (response.isSuccessful) {
+            response.body!!.string()
+        } else {
+            val id = response.request.url.pathSegments.last().removeSuffix(".js")
+            client.newCall(
+                GET("https://ltn.hitomi.la/galleries/$id.js", headersBuilder().build()),
+            ).execute().body?.string() ?: return emptyList()
+        }
         val obj = parseGalleryJs(js)
         val galleryId = obj.optString("id")
         val files = obj.optJSONArray("files") ?: return emptyList()
@@ -397,7 +404,7 @@ class Hitomi : HttpSource() {
             hasAvif -> "https://a${1 + m}.gold-usergeneratedcontent.net/$path.avif"
             else -> {
                 val ext = name.substringAfterLast('.', "jpg")
-                "https://${(97 + m).toChar()}b.gold-usergeneratedcontent.net/images/$path.$ext"
+                "https://${(97 + m).toChar()}a.gold-usergeneratedcontent.net/images/$path.$ext"
             }
         }
     }
