@@ -93,8 +93,13 @@ class Hitomi : HttpSource() {
             url = "/galleries/$id"
             artist = doc.select(".artist-list li a").joinToString { it.text() }
             author = artist
-            genre = doc.select(".relatedtags li a")
-                .joinToString { it.text().trimEnd('♀', '♂', ' ').trim() }
+            genre = doc.select(".relatedtags li a").joinToString { el ->
+                el.attr("href")
+                    .removePrefix("/tag/")
+                    .removeSuffix("-all.html")
+                    .replace("%3A", ":")
+                    .replace("%20", " ")
+            }
             description = buildString {
                 doc.select(".series-list li a").firstOrNull()?.text()
                     ?.takeIf { it.isNotEmpty() }?.let { append("Series: $it\n") }
