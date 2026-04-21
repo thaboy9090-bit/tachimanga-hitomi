@@ -65,16 +65,25 @@ class Hitomi : HttpSource() {
             else -> "all"
         }
 
+        val sortPrefix = when (sortFilter?.state ?: 0) {
+            1 -> "date/published/"
+            2 -> "popular/today/"
+            3 -> "popular/week/"
+            4 -> "popular/month/"
+            5 -> "popular/year/"
+            else -> ""
+        }
+
         when {
             query.isNotBlank() -> {
                 val q = query.trim().lowercase().replace('_', ' ')
                 val nozomiPath = when {
                     q.startsWith("female:") || q.startsWith("male:") ->
-                        "tag/${q.replace(" ", "%20")}-all.nozomi"
+                        "tag/$sortPrefix${q.replace(" ", "%20")}-$lang.nozomi"
                     q.contains(':') -> {
                         val area = q.substringBefore(':').trim()
                         val tag = q.substringAfter(':').trim().replace(" ", "%20")
-                        "$area/$tag-all.nozomi"
+                        "$area/$sortPrefix$tag-$lang.nozomi"
                     }
                     else -> {
                         val ids = titleSearch(q, page)
