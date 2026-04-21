@@ -86,9 +86,22 @@ class Hitomi : HttpSource() {
                         "$area/$sortPrefix$tag-$lang.nozomi"
                     }
                     else -> {
-                        val ids = titleSearch(q, page)
-                        if (ids != null) {
-                            pendingIds = ids
+                        val allIds = titleSearch(q)
+                        if (allIds != null) {
+                            val sortNozomi = when (sortFilter?.state ?: 0) {
+                                1 -> "date/published-all.nozomi"
+                                2 -> "popular/today-all.nozomi"
+                                3 -> "popular/week-all.nozomi"
+                                4 -> "popular/month-all.nozomi"
+                                5 -> "popular/year-all.nozomi"
+                                else -> null
+                            }
+                            pendingIds = if (sortNozomi != null) {
+                                fetchSortedTitleIds(sortNozomi, allIds.toHashSet(), page)
+                            } else {
+                                val start = (page - 1) * pageSize
+                                allIds.drop(start).take(pageSize)
+                            }
                             return GET(
                                 "$ltnUrl/index-all.nozomi",
                                 headersBuilder().add("Range", "bytes=0-3").build(),
@@ -133,7 +146,7 @@ class Hitomi : HttpSource() {
         return nozomiParse(response)
     }
 
-    private fun titleSearch(query: String, page: Int): List<Int>? {
+    private fun titleSearch(query: String): List<Int>? {
         try {
             val words = query.trim().lowercase().split("\\s+".toRegex()).filter { it.isNotEmpty() }
             if (words.isEmpty()) return null
@@ -147,13 +160,11 @@ class Hitomi : HttpSource() {
             val dataUrl = "$ltnUrl/galleriesindex/galleries.$version.data"
             val md = java.security.MessageDigest.getInstance("SHA-256")
 
-            // First word: preserve order from data file
             val firstKey = md.digest(words[0].toByteArray(Charsets.UTF_8)).take(4).toByteArray()
             val firstRef = bTreeNodeSearch(indexUrl, firstKey) ?: return emptyList()
             val firstIds = fetchAllIds(dataUrl, firstRef.first, firstRef.second)
             val resultSet = firstIds.toHashSet()
 
-            // Intersect remaining words into resultSet
             for (i in 1 until words.size) {
                 if (resultSet.isEmpty()) return emptyList()
                 val key = md.digest(words[i].toByteArray(Charsets.UTF_8)).take(4).toByteArray()
@@ -161,12 +172,28 @@ class Hitomi : HttpSource() {
                 resultSet.retainAll(fetchAllIds(dataUrl, dataRef.first, dataRef.second).toHashSet())
             }
 
-            // Filter first word's ordered list preserving original order
-            val allIds = firstIds.filter { it in resultSet }
-            val start = (page - 1) * pageSize
-            return allIds.drop(start).take(pageSize)
+            return firstIds.filter { it in resultSet }
         } catch (_: Exception) {}
         return null
+    }
+
+    private fun fetchSortedTitleIds(nozomiPath: String, titleIds: Set<Int>, page: Int): List<Int> {
+        val target = page * pageSize
+        val results = mutableListOf<Int>()
+        var byteOffset = 0L
+        val chunkBytes = 500 * 4
+
+        while (results.size < target) {
+            val bytes = fetchRange(nozomiPath.let { "$ltnUrl/$it" }, byteOffset, byteOffset + chunkBytes - 1)
+                ?: break
+            if (bytes.isEmpty()) break
+            results.addAll(parseNozomiBinary(bytes).filter { it in titleIds })
+            byteOffset += bytes.size
+            if (bytes.size < chunkBytes) break
+        }
+
+        val start = (page - 1) * pageSize
+        return results.drop(start).take(pageSize)
     }
 
     private fun resolveTagPath(query: String): String {
