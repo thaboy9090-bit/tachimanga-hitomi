@@ -108,7 +108,7 @@ class Hitomi : HttpSource() {
             }
             typeFilter != null && typeFilter.state > 0 -> {
                 val type = typeFilter.values[typeFilter.state]
-                return nozomiRequest("type/$type-all.nozomi", page)
+                return nozomiRequest("type/$sortPrefix$type-all.nozomi", page)
             }
             else -> {
                 val path = when (sortFilter?.state ?: 0) {
