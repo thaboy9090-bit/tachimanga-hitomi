@@ -134,7 +134,7 @@ class Hitomi : HttpSource() {
 
             var resultIds: Set<Int>? = null
             for (word in words) {
-                val key = md.digest(word.toByteArray(Charsets.UTF_8))
+                val key = md.digest(word.toByteArray(Charsets.UTF_8)).take(4).toByteArray()
                 val dataRef = bTreeNodeSearch(indexUrl, key)
                 if (dataRef == null) return emptyList()
                 val wordIds = fetchAllIds(dataUrl, dataRef.first, dataRef.second)
