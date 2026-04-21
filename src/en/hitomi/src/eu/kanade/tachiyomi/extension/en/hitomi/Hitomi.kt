@@ -62,7 +62,7 @@ class Hitomi : HttpSource() {
                         val tag = q.substringAfter(':').trim().replace(" ", "%20")
                         "$area/$tag-all.nozomi"
                     }
-                    else -> "tag/${q.replace(" ", "%20")}-all.nozomi"
+                    else -> resolveTagPath(q)
                 }
             }
             typeFilter != null && typeFilter.state > 0 -> {
@@ -72,6 +72,33 @@ class Hitomi : HttpSource() {
             else -> "index-all.nozomi"
         }
         return nozomiRequest(nozomiPath, page)
+    }
+
+    private fun resolveTagPath(query: String): String {
+        try {
+            val encoded = query.replace(" ", "_").replace("/", "slash").replace(".", "dot")
+            val path = encoded.map { it.toString() }.joinToString("/")
+            val resp = client.newCall(
+                GET(
+                    "https://tagindex.hitomi.la/global/$path.json",
+                    headersBuilder().set("Referer", baseUrl).build(),
+                ),
+            ).execute()
+            if (resp.isSuccessful) {
+                val arr = org.json.JSONArray(resp.body?.string() ?: "[]")
+                if (arr.length() > 0) {
+                    val item = arr.getJSONArray(0)
+                    val name = item.getString(0).replace(" ", "%20")
+                    val namespace = item.getString(2)
+                    return when (namespace) {
+                        "female", "male" -> "tag/$namespace:$name-all.nozomi"
+                        "tag", "" -> "tag/$name-all.nozomi"
+                        else -> "$namespace/$name-all.nozomi"
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return "tag/${query.replace(" ", "%20")}-all.nozomi"
     }
 
     override fun searchMangaParse(response: Response): MangasPage =
@@ -94,11 +121,10 @@ class Hitomi : HttpSource() {
             artist = doc.select(".artist-list li a").joinToString { it.text() }
             author = artist
             genre = doc.select(".relatedtags li a").joinToString { el ->
-                el.attr("href")
-                    .removePrefix("/tag/")
-                    .removeSuffix("-all.html")
-                    .replace("%3A", ":")
-                    .replace("%20", " ")
+                java.net.URLDecoder.decode(
+                    el.attr("href").removePrefix("/tag/").removeSuffix("-all.html"),
+                    "UTF-8",
+                )
             }
             description = buildString {
                 doc.select(".series-list li a").firstOrNull()?.text()
