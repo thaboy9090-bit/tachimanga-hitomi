@@ -97,14 +97,9 @@ class Hitomi : HttpSource() {
                                 3 -> "popular/week-all.nozomi"
                                 4 -> "popular/month-all.nozomi"
                                 5 -> "popular/year-all.nozomi"
-                                else -> null
+                                else -> "index-all.nozomi"
                             }
-                            pendingIds = if (sortNozomi != null) {
-                                fetchSortedTitleIds(sortNozomi, allIds.toHashSet(), page)
-                            } else {
-                                val start = (page - 1) * pageSize
-                                allIds.drop(start).take(pageSize)
-                            }
+                            pendingIds = fetchSortedTitleIds(sortNozomi, allIds.toHashSet(), page)
                             return GET(
                                 "$ltnUrl/index-all.nozomi",
                                 headersBuilder().add("Range", "bytes=0-3").build(),
@@ -196,7 +191,7 @@ class Hitomi : HttpSource() {
         val target = page * pageSize
         val results = mutableListOf<Int>()
         var byteOffset = 0L
-        val chunkBytes = 500 * 4
+        val chunkBytes = 5000 * 4
 
         while (results.size < target) {
             val bytes = fetchRange(nozomiPath.let { "$ltnUrl/$it" }, byteOffset, byteOffset + chunkBytes - 1)
