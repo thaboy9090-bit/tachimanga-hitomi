@@ -396,12 +396,25 @@ class Hitomi : HttpSource() {
             val numKeys = buf.int
             if (numKeys == 0) return null
 
-            val keys = (0 until numKeys).map {
+            // Fixed 16 key slots: each slot = 4 bytes (size) + 4 bytes (key data)
+            val keys = mutableListOf<ByteArray>()
+            for (i in 0 until 16) {
                 val size = buf.int
-                ByteArray(size).also { buf.get(it) }
+                val keyData = ByteArray(4)
+                buf.get(keyData)
+                if (i < numKeys && size > 0) keys.add(keyData.take(size).toByteArray())
             }
+
+            // Fixed 16 data slots: each = 8 bytes (offset) + 4 bytes (length)
             val numDatas = buf.int
-            val datas = (0 until numDatas).map { Pair(buf.long, buf.int) }
+            val datas = mutableListOf<Pair<Long, Int>>()
+            for (i in 0 until 16) {
+                val offset = buf.long
+                val length = buf.int
+                if (i < numDatas) datas.add(Pair(offset, length))
+            }
+
+            // 17 subnode addresses (B+1)
             val subnodes = (0..16).map { buf.long }
 
             var nextAddr = 0L
