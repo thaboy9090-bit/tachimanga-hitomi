@@ -389,16 +389,18 @@ class Hitomi : HttpSource() {
         return JSONObject(cleaned)
     }
 
-    private data class GgData(val b: String, val mCases: Set<Int>)
+    private data class GgData(val b: String, val mCases: Set<Int>, val oDefault: Int)
 
     private fun fetchGg(): GgData {
         val js = client.newCall(
             GET("$ltnUrl/gg.js", headersBuilder().set("Referer", baseUrl).build()),
-        ).execute().body?.string() ?: return GgData("", emptySet())
+        ).execute().body?.string() ?: return GgData("", emptySet(), 0)
         val b = Regex("""b:\s*'([^']+)'""").find(js)?.groupValues?.get(1) ?: ""
         val mCases = Regex("""case\s+(\d+):""").findAll(js)
             .map { it.groupValues[1].toInt() }.toSet()
-        return GgData(b, mCases)
+        // Parse initial value of o — cases set the opposite. Robust to hitomi flipping the logic.
+        val oDefault = Regex("""var o = (\d)""").find(js)?.groupValues?.get(1)?.toInt() ?: 0
+        return GgData(b, mCases, oDefault)
     }
 
     private fun ggS(hash: String): Int {
@@ -411,7 +413,7 @@ class Hitomi : HttpSource() {
     private fun buildImageUrl(hash: String, name: String, hasWebp: Boolean, hasAvif: Boolean, gg: GgData): String {
         if (hash.isEmpty()) return ""
         val s = ggS(hash)
-        val m = if (s in gg.mCases) 0 else 1
+        val m = if (s in gg.mCases) 1 - gg.oDefault else gg.oDefault
         val path = "${gg.b}$s/$hash"
         return when {
             hasWebp -> "https://w${1 + m}.gold-usergeneratedcontent.net/$path.webp"
