@@ -68,6 +68,19 @@ jobs:
             echo "Copied: $apk → $dest"
           done
 
+      - name: Collect icons
+        run: |
+          mkdir -p repo/icon
+          for ext_dir in src/*/*; do
+            lang=$(echo "$ext_dir" | cut -d'/' -f2)
+            src=$(echo "$ext_dir" | cut -d'/' -f3)
+            icon="$ext_dir/res/mipmap-xxxhdpi/ic_launcher.png"
+            if [ -f "$icon" ]; then
+              cp "$icon" "repo/icon/$lang.$src.png"
+              echo "Copied icon: $lang.$src"
+            fi
+          done
+
       - name: Generate index.min.json
         run: python scripts/generate_index.py
 
