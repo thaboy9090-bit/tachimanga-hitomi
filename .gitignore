@@ -1,0 +1,22 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android / IntelliJ
+*.iml
+.idea/
+local.properties
+
+# VS Code
+.vscode/
+
+# Claude Code
+.claude/
+
+# Repo output (generado por CI)
+repo/
+
+# OS
+.DS_Store
+Thumbs.db
