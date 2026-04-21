@@ -56,6 +56,9 @@ class Hitomi : HttpSource() {
         val langFilter = filters.filterIsInstance<LanguageFilter>().firstOrNull()
         val sortFilter = filters.filterIsInstance<SortFilter>().firstOrNull()
         val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
+        val seriesFilter = filters.filterIsInstance<SeriesFilter>().firstOrNull()
+        val artistFilter = filters.filterIsInstance<ArtistFilter>().firstOrNull()
+        val characterFilter = filters.filterIsInstance<CharacterFilter>().firstOrNull()
 
         val lang = when (langFilter?.state ?: 0) {
             1 -> "english"
@@ -118,6 +121,18 @@ class Hitomi : HttpSource() {
                     }
                 }
                 return nozomiRequest(nozomiPath, page)
+            }
+            seriesFilter?.state?.isNotBlank() == true -> {
+                val s = seriesFilter.state.trim().lowercase().replace(" ", "%20")
+                return nozomiRequest("series/$sortPrefix$s-$lang.nozomi", page)
+            }
+            artistFilter?.state?.isNotBlank() == true -> {
+                val s = artistFilter.state.trim().lowercase().replace(" ", "%20")
+                return nozomiRequest("artist/$sortPrefix$s-$lang.nozomi", page)
+            }
+            characterFilter?.state?.isNotBlank() == true -> {
+                val s = characterFilter.state.trim().lowercase().replace(" ", "%20")
+                return nozomiRequest("character/$sortPrefix$s-$lang.nozomi", page)
             }
             typeFilter != null && typeFilter.state > 0 -> {
                 val type = typeFilter.values[typeFilter.state]
@@ -330,8 +345,10 @@ class Hitomi : HttpSource() {
     // ======================== Filters ========================
 
     override fun getFilterList() = FilterList(
-        Filter.Header("Sintaxis: female:big ass | male:shotacon | artist:nombre"),
-        Filter.Header("character:nombre | series:nombre | type:doujinshi"),
+        Filter.Header("Búsqueda por campo (dejar vacío para ignorar):"),
+        SeriesFilter(),
+        ArtistFilter(),
+        CharacterFilter(),
         Filter.Separator(),
         LanguageFilter(),
         SortFilter(),
@@ -339,6 +356,10 @@ class Hitomi : HttpSource() {
         Filter.Header("O filtrar por tipo:"),
         TypeFilter(),
     )
+
+    class SeriesFilter : Filter.Text("Serie")
+    class ArtistFilter : Filter.Text("Artista")
+    class CharacterFilter : Filter.Text("Personaje")
 
     class LanguageFilter : Filter.Select<String>(
         "Idioma",
