@@ -25,7 +25,6 @@ class Hitomi : HttpSource() {
     override val supportsLatest = true
 
     private val ltnUrl = "https://ltn.gold-usergeneratedcontent.net"
-    private val ltnHitomiUrl = "https://ltn.hitomi.la"
     private val pageSize = 25
 
     @Volatile
@@ -125,11 +124,11 @@ class Hitomi : HttpSource() {
 
             val ts = System.currentTimeMillis()
             val version = client.newCall(
-                GET("$ltnHitomiUrl/galleriesindex/version?_=$ts", headersBuilder().build()),
+                GET("$ltnUrl/galleriesindex/version?_=$ts", headersBuilder().build()),
             ).execute().body?.string()?.trim() ?: return null
 
-            val indexUrl = "$ltnHitomiUrl/galleriesindex/galleries.$version.index"
-            val dataUrl = "$ltnHitomiUrl/galleriesindex/galleries.$version.data"
+            val indexUrl = "$ltnUrl/galleriesindex/galleries.$version.index"
+            val dataUrl = "$ltnUrl/galleriesindex/galleries.$version.data"
             val md = java.security.MessageDigest.getInstance("SHA-256")
 
             var resultIds: Set<Int>? = null
@@ -409,8 +408,7 @@ class Hitomi : HttpSource() {
     private fun bTreeNodeSearch(indexUrl: String, key: ByteArray): Pair<Long, Int>? {
         var nodeAddress = 0L
         repeat(64) {
-            // Fetch enough bytes for a full node (max: 4 + 16*(4+32) + 4 + 16*12 + 17*8 = 912)
-            val nodeData = fetchRange(indexUrl, nodeAddress, nodeAddress + 911) ?: return null
+            val nodeData = fetchRange(indexUrl, nodeAddress, nodeAddress + 463) ?: return null
             val buf = ByteBuffer.wrap(nodeData).order(ByteOrder.BIG_ENDIAN)
 
             val numKeys = buf.int
