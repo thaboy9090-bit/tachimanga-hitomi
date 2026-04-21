@@ -79,11 +79,11 @@ class Hitomi : HttpSource() {
                 val q = query.trim().lowercase().replace('_', ' ')
                 val nozomiPath = when {
                     q.startsWith("female:") || q.startsWith("male:") ->
-                        "tag/$sortPrefix${q.replace(" ", "%20")}-all.nozomi"
+                        "tag/$sortPrefix${q.replace(" ", "%20")}-$lang.nozomi"
                     q.contains(':') -> {
                         val area = q.substringBefore(':').trim()
                         val tag = q.substringAfter(':').trim().replace(" ", "%20")
-                        "$area/$sortPrefix$tag-all.nozomi"
+                        "$area/$sortPrefix$tag-$lang.nozomi"
                     }
                     else -> {
                         val ids = titleSearch(q, page)
@@ -94,7 +94,7 @@ class Hitomi : HttpSource() {
                                 headersBuilder().add("Range", "bytes=0-3").build(),
                             )
                         }
-                        val rawPath = resolveTagPath(q)
+                        val rawPath = resolveTagPath(q).removeSuffix("-all.nozomi") + "-$lang.nozomi"
                         if (sortPrefix.isEmpty()) {
                             rawPath
                         } else {
