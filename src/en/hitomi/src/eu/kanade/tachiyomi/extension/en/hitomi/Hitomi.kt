@@ -34,7 +34,7 @@ class Hitomi : HttpSource() {
     // ======================== Popular ========================
 
     override fun popularMangaRequest(page: Int): Request =
-        nozomiRequest("index-english.nozomi", page)
+        nozomiRequest("popular/year-all.nozomi", page)
 
     override fun popularMangaParse(response: Response): MangasPage =
         nozomiParse(response)
@@ -42,7 +42,7 @@ class Hitomi : HttpSource() {
     // ======================== Latest ========================
 
     override fun latestUpdatesRequest(page: Int): Request =
-        nozomiRequest("index-english.nozomi", page)
+        nozomiRequest("index-all.nozomi", page)
 
     override fun latestUpdatesParse(response: Response): MangasPage =
         nozomiParse(response)
@@ -69,7 +69,7 @@ class Hitomi : HttpSource() {
                 val type = typeFilter.values[typeFilter.state]
                 "type/$type-all.nozomi"
             }
-            else -> "index-english.nozomi"
+            else -> "index-all.nozomi"
         }
         return nozomiRequest(nozomiPath, page)
     }
