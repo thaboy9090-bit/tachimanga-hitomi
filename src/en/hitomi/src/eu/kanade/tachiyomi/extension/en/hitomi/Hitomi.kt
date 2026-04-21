@@ -53,20 +53,21 @@ class Hitomi : HttpSource() {
         val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
         val nozomiPath = when {
             query.isNotBlank() -> {
-                val trimmed = query.trim().lowercase().replace('_', ' ')
-                if (trimmed.contains(':')) {
-                    val area = trimmed.substringBefore(':').trim()
-                    val tag = trimmed.substringAfter(':').trim().replace(" ", "%20")
-                    val lang = if (area == "tag") "english" else "all"
-                    "n/$area/$tag-$lang.nozomi"
-                } else {
-                    val tag = trimmed.replace(" ", "%20")
-                    "n/tag/$tag-english.nozomi"
+                val q = query.trim().lowercase().replace('_', ' ')
+                when {
+                    q.startsWith("female:") || q.startsWith("male:") ->
+                        "tag/${q.replace(" ", "%20")}-all.nozomi"
+                    q.contains(':') -> {
+                        val area = q.substringBefore(':').trim()
+                        val tag = q.substringAfter(':').trim().replace(" ", "%20")
+                        "$area/$tag-all.nozomi"
+                    }
+                    else -> "tag/${q.replace(" ", "%20")}-all.nozomi"
                 }
             }
             typeFilter != null && typeFilter.state > 0 -> {
                 val type = typeFilter.values[typeFilter.state]
-                "n/type/$type-all.nozomi"
+                "type/$type-all.nozomi"
             }
             else -> "index-english.nozomi"
         }
