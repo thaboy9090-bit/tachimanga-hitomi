@@ -131,18 +131,22 @@ class Hitomi : HttpSource() {
             val dataUrl = "$ltnUrl/galleriesindex/galleries.$version.data"
             val md = java.security.MessageDigest.getInstance("SHA-256")
 
-            var resultIds: Set<Int>? = null
-            for (word in words) {
-                val key = md.digest(word.toByteArray(Charsets.UTF_8)).take(4).toByteArray()
-                val dataRef = bTreeNodeSearch(indexUrl, key)
-                if (dataRef == null) return emptyList()
-                val wordIds = fetchAllIds(dataUrl, dataRef.first, dataRef.second)
-                resultIds = if (resultIds == null) wordIds.toHashSet()
-                            else resultIds intersect wordIds.toHashSet()
-                if (resultIds.isEmpty()) return emptyList()
+            // First word: preserve order from data file
+            val firstKey = md.digest(words[0].toByteArray(Charsets.UTF_8)).take(4).toByteArray()
+            val firstRef = bTreeNodeSearch(indexUrl, firstKey) ?: return emptyList()
+            val firstIds = fetchAllIds(dataUrl, firstRef.first, firstRef.second)
+            val resultSet = firstIds.toHashSet()
+
+            // Intersect remaining words into resultSet
+            for (i in 1 until words.size) {
+                if (resultSet.isEmpty()) return emptyList()
+                val key = md.digest(words[i].toByteArray(Charsets.UTF_8)).take(4).toByteArray()
+                val dataRef = bTreeNodeSearch(indexUrl, key) ?: return emptyList()
+                resultSet.retainAll(fetchAllIds(dataUrl, dataRef.first, dataRef.second).toHashSet())
             }
 
-            val allIds = resultIds?.toList() ?: return null
+            // Filter first word's ordered list preserving original order
+            val allIds = firstIds.filter { it in resultSet }
             val start = (page - 1) * pageSize
             return allIds.drop(start).take(pageSize)
         } catch (_: Exception) {}
