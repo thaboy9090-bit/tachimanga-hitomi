@@ -79,11 +79,11 @@ class Hitomi : HttpSource() {
                 val q = query.trim().lowercase().replace('_', ' ')
                 val nozomiPath = when {
                     q.startsWith("female:") || q.startsWith("male:") ->
-                        "tag/$sortPrefix${q.replace(" ", "%20")}-$lang.nozomi"
+                        "tag/$sortPrefix${q.replace(" ", "%20")}-all.nozomi"
                     q.contains(':') -> {
                         val area = q.substringBefore(':').trim()
                         val tag = q.substringAfter(':').trim().replace(" ", "%20")
-                        "$area/$sortPrefix$tag-$lang.nozomi"
+                        "$area/$sortPrefix$tag-all.nozomi"
                     }
                     else -> {
                         val ids = titleSearch(q, page)
