@@ -204,26 +204,12 @@ class Hitomi : HttpSource() {
         val results = mutableListOf<Int>()
         var byteOffset = 0L
         val chunkBytes = 10000 * 4  // 40 KB per request = 10 000 IDs
-        val parallelism = 4
-        val executor = java.util.concurrent.Executors.newFixedThreadPool(parallelism)
-        try {
-            outer@ while (true) {
-                val futures = (0 until parallelism).map { i ->
-                    val start = byteOffset + i.toLong() * chunkBytes
-                    executor.submit<ByteArray?> {
-                        fetchRange("$ltnUrl/$nozomiPath", start, start + chunkBytes - 1)
-                    }
-                }
-                for (future in futures) {
-                    val bytes = future.get()
-                    if (bytes == null || bytes.isEmpty()) break@outer
-                    results.addAll(parseNozomiBinary(bytes).filter { it in titleIds })
-                    if (bytes.size < chunkBytes) break@outer
-                }
-                byteOffset += parallelism.toLong() * chunkBytes
-            }
-        } finally {
-            executor.shutdownNow()
+        while (true) {
+            val bytes = fetchRange("$ltnUrl/$nozomiPath", byteOffset, byteOffset + chunkBytes - 1) ?: break
+            if (bytes.isEmpty()) break
+            results.addAll(parseNozomiBinary(bytes).filter { it in titleIds })
+            byteOffset += bytes.size
+            if (bytes.size < chunkBytes) break
         }
         return results
     }
