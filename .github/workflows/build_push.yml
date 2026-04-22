@@ -76,8 +76,10 @@ jobs:
             src=$(echo "$ext_dir" | cut -d'/' -f3)
             icon="$ext_dir/res/mipmap-xxxhdpi/ic_launcher.png"
             if [ -f "$icon" ]; then
-              cp "$icon" "repo/icon/$lang.$src.png"
-              echo "Copied icon: $lang.$src"
+              pkg=$(grep 'pkgNameSuffix' "$ext_dir/build.gradle" | grep -o "'[^']*'" | tr -d "'")
+              dest="eu.kanade.tachiyomi.extension.$pkg.png"
+              cp "$icon" "repo/icon/$dest"
+              echo "Copied icon: $dest"
             fi
           done
 
