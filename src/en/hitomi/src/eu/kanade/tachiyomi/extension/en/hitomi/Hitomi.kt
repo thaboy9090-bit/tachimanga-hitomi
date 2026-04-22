@@ -94,25 +94,31 @@ class Hitomi : HttpSource() {
                     else -> {
                         val allIds = titleSearch(q)
                         if (allIds != null) {
-                            val sortNozomi = when (sortFilter?.state ?: 0) {
-                                1 -> "date/published-all.nozomi"
+                            // Popular nozomis are small (filtered + ordered) → worth scanning.
+                            // Date Added / Date Published nozomis have millions of IDs → skip scan,
+                            // return B-tree results directly (fast, unordered within the result set).
+                            val popularNozomi = when (sortFilter?.state ?: 0) {
                                 2 -> "popular/today-all.nozomi"
                                 3 -> "popular/week-all.nozomi"
                                 4 -> "popular/month-all.nozomi"
                                 5 -> "popular/year-all.nozomi"
-                                else -> "index-all.nozomi"
-                            }
-                            val cacheKey = "$q|$sortNozomi"
-                            val cached = titleSearchCache
-                            val allSorted = if (cached != null && cached.first == cacheKey) {
-                                cached.second
-                            } else {
-                                fetchAllSortedTitleIds(sortNozomi, allIds.toHashSet()).also {
-                                    titleSearchCache = Pair(cacheKey, it)
-                                }
+                                else -> null
                             }
                             val start = (page - 1) * pageSize
-                            pendingIds = allSorted.drop(start).take(pageSize)
+                            pendingIds = if (popularNozomi != null) {
+                                val cacheKey = "$q|$popularNozomi"
+                                val cached = titleSearchCache
+                                val allSorted = if (cached != null && cached.first == cacheKey) {
+                                    cached.second
+                                } else {
+                                    fetchAllSortedTitleIds(popularNozomi, allIds.toHashSet()).also {
+                                        titleSearchCache = Pair(cacheKey, it)
+                                    }
+                                }
+                                allSorted.drop(start).take(pageSize)
+                            } else {
+                                allIds.drop(start).take(pageSize)
+                            }
                             return GET(
                                 "$ltnUrl/index-all.nozomi",
                                 headersBuilder().add("Range", "bytes=0-3").build(),
