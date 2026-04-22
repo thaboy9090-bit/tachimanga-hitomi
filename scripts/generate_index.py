@@ -67,8 +67,9 @@ def build_index() -> list:
         pkg = f"eu.kanade.tachiyomi.extension.{pkg_suffix}"
         source_id = calc_source_id(ext_name, lang)
 
-        icon_file = os.path.join(REPO_DIR, "icon", f"{lang}.{src}.png")
-        icon_url = f"icon/{lang}.{src}.png" if os.path.exists(icon_file) else ""
+        icon_filename = f"eu.kanade.tachiyomi.extension.{pkg_suffix}.png"
+        icon_file = os.path.join(REPO_DIR, "icon", icon_filename)
+        icon_url = f"icon/{icon_filename}" if os.path.exists(icon_file) else ""
 
         entry = {
             "name": ext_name,
