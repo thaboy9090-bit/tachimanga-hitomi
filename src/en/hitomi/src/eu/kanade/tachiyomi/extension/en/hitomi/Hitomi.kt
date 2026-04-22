@@ -30,6 +30,9 @@ class Hitomi : HttpSource() {
     @Volatile
     private var pendingIds: List<Int>? = null
 
+    @Volatile
+    private var titleSearchCache: Pair<String, List<Int>>? = null
+
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", baseUrl)
         .add("Origin", baseUrl)
@@ -99,7 +102,17 @@ class Hitomi : HttpSource() {
                                 5 -> "popular/year-all.nozomi"
                                 else -> "index-all.nozomi"
                             }
-                            pendingIds = fetchSortedTitleIds(sortNozomi, allIds.toHashSet(), page)
+                            val cacheKey = "$q|$sortNozomi"
+                            val cached = titleSearchCache
+                            val allSorted = if (cached != null && cached.first == cacheKey) {
+                                cached.second
+                            } else {
+                                fetchAllSortedTitleIds(sortNozomi, allIds.toHashSet()).also {
+                                    titleSearchCache = Pair(cacheKey, it)
+                                }
+                            }
+                            val start = (page - 1) * pageSize
+                            pendingIds = allSorted.drop(start).take(pageSize)
                             return GET(
                                 "$ltnUrl/index-all.nozomi",
                                 headersBuilder().add("Range", "bytes=0-3").build(),
@@ -187,23 +200,32 @@ class Hitomi : HttpSource() {
         return null
     }
 
-    private fun fetchSortedTitleIds(nozomiPath: String, titleIds: Set<Int>, page: Int): List<Int> {
-        val target = page * pageSize
+    private fun fetchAllSortedTitleIds(nozomiPath: String, titleIds: Set<Int>): List<Int> {
         val results = mutableListOf<Int>()
         var byteOffset = 0L
-        val chunkBytes = 5000 * 4
-
-        while (results.size < target) {
-            val bytes = fetchRange(nozomiPath.let { "$ltnUrl/$it" }, byteOffset, byteOffset + chunkBytes - 1)
-                ?: break
-            if (bytes.isEmpty()) break
-            results.addAll(parseNozomiBinary(bytes).filter { it in titleIds })
-            byteOffset += bytes.size
-            if (bytes.size < chunkBytes) break
+        val chunkBytes = 10000 * 4  // 40 KB per request = 10 000 IDs
+        val parallelism = 4
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(parallelism)
+        try {
+            outer@ while (true) {
+                val futures = (0 until parallelism).map { i ->
+                    val start = byteOffset + i.toLong() * chunkBytes
+                    executor.submit<ByteArray?> {
+                        fetchRange("$ltnUrl/$nozomiPath", start, start + chunkBytes - 1)
+                    }
+                }
+                for (future in futures) {
+                    val bytes = future.get()
+                    if (bytes == null || bytes.isEmpty()) break@outer
+                    results.addAll(parseNozomiBinary(bytes).filter { it in titleIds })
+                    if (bytes.size < chunkBytes) break@outer
+                }
+                byteOffset += parallelism.toLong() * chunkBytes
+            }
+        } finally {
+            executor.shutdownNow()
         }
-
-        val start = (page - 1) * pageSize
-        return results.drop(start).take(pageSize)
+        return results
     }
 
     private fun resolveTagPath(query: String): String {
