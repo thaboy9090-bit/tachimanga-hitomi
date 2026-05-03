@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
@@ -32,41 +33,67 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     private val api = "https://manhwawebbackend-production.up.railway.app"
 
-    init {
-        runCatching {
-            val ctx = Class.forName("android.app.ActivityThread")
-                .getMethod("currentApplication")
-                .invoke(null) as? android.content.Context
-            if (ctx != null && cachedToken.isEmpty()) {
-                @Suppress("DEPRECATION")
-                val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
-                cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
-            }
-        }
-    }
-
     companion object {
-        @Volatile private var cachedToken = ""
+        @Volatile var cachedToken = ""
+        @Volatile var cachedEmail = ""
+        @Volatile var cachedPassword = ""
         @Volatile var lastViewedMangaId = ""
         @Volatile var lastViewedMangaTitle = ""
         private const val PREF_TOKEN = "auth_token"
         private const val PREF_EMAIL = "email"
         private const val PREF_PASSWORD = "password"
+
+        fun tryGetSharedPreferences(): android.content.SharedPreferences? = runCatching {
+            val ctx = Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication")
+                .invoke(null) as? android.content.Context
+            if (ctx != null) {
+                @Suppress("DEPRECATION")
+                android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
+            } else null
+        }.getOrNull()
     }
 
-    override fun headersBuilder() = super.headersBuilder().let { b ->
-        if (cachedToken.isEmpty()) {
-            runCatching {
-                val ctx = Class.forName("android.app.ActivityThread")
-                    .getMethod("currentApplication")
-                    .invoke(null) as? android.content.Context
-                if (ctx != null) {
-                    @Suppress("DEPRECATION")
-                    val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
-                    cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
-                }
-            }
+    init {
+        runCatching {
+            val sp = tryGetSharedPreferences() ?: return@runCatching
+            if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
+            if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
+            if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
         }
+    }
+
+    // Auto-login interceptor: when any authenticated request gets a 401, re-login and retry once.
+    override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor { chain ->
+            val request = chain.request()
+            val response = chain.proceed(request)
+            if (response.code != 401 || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+                return@addInterceptor response
+            }
+            val newToken = runCatching {
+                val body = JSONObject()
+                    .put("email", cachedEmail)
+                    .put("password", cachedPassword)
+                    .toString()
+                    .toRequestBody("application/json".toMediaType())
+                val loginResp = network.client.newCall(
+                    Request.Builder().url("$api/user/login").post(body).build(),
+                ).execute()
+                if (!loginResp.isSuccessful) { loginResp.close(); return@runCatching null }
+                val json = JSONObject(loginResp.body!!.string())
+                loginResp.close()
+                (json.optJSONObject("data") ?: json).optString("jwt").takeIf { it.isNotEmpty() }
+            }.getOrNull() ?: return@addInterceptor response
+
+            cachedToken = newToken
+            runCatching { tryGetSharedPreferences()?.edit()?.putString(PREF_TOKEN, newToken)?.apply() }
+            response.close()
+            chain.proceed(request.newBuilder().header("Authorization", "Bearer $newToken").build())
+        }
+        .build()
+
+    override fun headersBuilder() = super.headersBuilder().let { b ->
         val t = cachedToken
         if (t.isNotEmpty()) b.add("Authorization", "Bearer $t") else b
     }
@@ -382,6 +409,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             summary = sp.getString(PREF_EMAIL, "") ?: ""
             setOnPreferenceChangeListener { pref: Preference, value: Any ->
                 sp.edit().putString(PREF_EMAIL, value.toString()).apply()
+                cachedEmail = value.toString()
                 pref.summary = value.toString()
                 true
             }
@@ -399,6 +427,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                 val email = sp.getString(PREF_EMAIL, "") ?: ""
                 val pass = value.toString()
                 sp.edit().putString(PREF_PASSWORD, pass).apply()
+                cachedPassword = pass
                 if (email.isEmpty()) {
                     Toast.makeText(screen.context, "Ingresa tu email primero", Toast.LENGTH_SHORT).show()
                     return@setOnPreferenceChangeListener true
