@@ -37,7 +37,6 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         @Volatile var cachedToken = ""
         @Volatile var cachedEmail = ""
         @Volatile var cachedPassword = ""
-        @Volatile var cachedSp: android.content.SharedPreferences? = null
         @Volatile var lastViewedMangaId = ""
         @Volatile var lastViewedMangaTitle = ""
         private const val PREF_TOKEN = "auth_token"
@@ -76,16 +75,29 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             Triple(email, pass, map[PREF_TOKEN] ?: "")
         }.getOrNull()
 
+        private fun String.escapeXml() =
+            replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
         fun saveCreds(email: String, password: String, token: String) {
-            cachedSp?.edit()
-                ?.putString(PREF_EMAIL, email)
-                ?.putString(PREF_PASSWORD, password)
-                ?.putString(PREF_TOKEN, token)
-                ?.apply()
+            runCatching {
+                val pkg = packageName() ?: return@runCatching
+                val dir = java.io.File("/data/data/$pkg/shared_prefs").also { it.mkdirs() }
+                val tmp = java.io.File(dir, "$SP_NAME.xml.tmp")
+                tmp.writeText(
+                    "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" +
+                        "    <string name=\"$PREF_EMAIL\">${email.escapeXml()}</string>\n" +
+                        "    <string name=\"$PREF_PASSWORD\">${password.escapeXml()}</string>\n" +
+                        "    <string name=\"$PREF_TOKEN\">${token.escapeXml()}</string>\n" +
+                        "</map>",
+                    Charsets.UTF_8,
+                )
+                tmp.renameTo(java.io.File(dir, "$SP_NAME.xml"))
+            }
         }
 
         fun saveToken(token: String) {
-            cachedSp?.edit()?.putString(PREF_TOKEN, token)?.apply()
+            val current = readCredsFromDisk()
+            saveCreds(current?.first ?: cachedEmail, current?.second ?: cachedPassword, token)
         }
     }
 
@@ -127,21 +139,13 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun headersBuilder() = super.headersBuilder().let { b ->
         if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-            // Try 1: cached SP reference (set when setupPreferenceScreen was opened this session)
-            cachedSp?.let { sp ->
-                if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
-                if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
-                if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
+            // Try 1: read from our SP file on disk — no reflection needed
+            readCredsFromDisk()?.let { (email, pass, token) ->
+                if (cachedEmail.isEmpty()) cachedEmail = email
+                if (cachedPassword.isEmpty()) cachedPassword = pass
+                if (cachedToken.isEmpty()) cachedToken = token
             }
-            // Try 2: read from our SP file on disk — no reflection needed
-            if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-                readCredsFromDisk()?.let { (email, pass, token) ->
-                    if (cachedEmail.isEmpty()) cachedEmail = email
-                    if (cachedPassword.isEmpty()) cachedPassword = pass
-                    if (cachedToken.isEmpty()) cachedToken = token
-                }
-            }
-            // Try 3: auto-login if we have email+password but no token
+            // Try 2: auto-login if we have email+password but no token
             if (cachedToken.isEmpty() && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
                 runCatching {
                     val tok = performLogin(cachedEmail, cachedPassword)
@@ -454,23 +458,23 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Login / Preferencias ========================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        // Use a dedicated named SP so we always know the exact file name on disk (manhwaweb.xml).
-        val sp = screen.context.getSharedPreferences(SP_NAME, android.content.Context.MODE_PRIVATE)
-        cachedSp = sp
-
-        // Load all three on every open so cachedEmail/cachedPassword are always populated.
-        if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
-        if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
-        if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
+        // Refresh cached creds from disk in case they were saved in a previous session.
+        if (cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+            readCredsFromDisk()?.let { (email, pass, token) ->
+                if (cachedEmail.isEmpty()) cachedEmail = email
+                if (cachedPassword.isEmpty()) cachedPassword = pass
+                if (cachedToken.isEmpty()) cachedToken = token
+            }
+        }
 
         EditTextPreference(screen.context).apply {
             key = PREF_EMAIL
             title = "Email"
-            summary = cachedEmail.ifEmpty { sp.getString(PREF_EMAIL, "") ?: "" }
+            summary = cachedEmail
             setOnPreferenceChangeListener { pref: Preference, value: Any ->
                 val email = value.toString()
-                sp.edit().putString(PREF_EMAIL, email).apply()
                 cachedEmail = email
+                if (cachedPassword.isNotEmpty()) saveCreds(email, cachedPassword, cachedToken)
                 pref.summary = email
                 true
             }
@@ -484,13 +488,12 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                 et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
             setOnPreferenceChangeListener { pref: Preference, value: Any ->
-                val email = sp.getString(PREF_EMAIL, "") ?: ""
+                val email = cachedEmail
                 val pass = value.toString()
                 if (email.isEmpty()) {
                     Toast.makeText(screen.context, "Ingresa tu email primero", Toast.LENGTH_SHORT).show()
                     return@setOnPreferenceChangeListener true
                 }
-                sp.edit().putString(PREF_PASSWORD, pass).apply()
                 cachedPassword = pass
                 Thread {
                     runCatching {
