@@ -4,10 +4,11 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
-import android.preference.EditTextPreference
-import android.preference.Preference
-import android.preference.PreferenceScreen
+import android.text.InputType
 import android.widget.Toast
+import androidx.preference.EditTextPreference
+import androidx.preference.Preference
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
@@ -272,6 +273,9 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             key = PREF_PASSWORD
             title = "Contraseña"
             summary = if (prefs.getString(PREF_PASSWORD, "").isNullOrEmpty()) "No configurada" else "••••••••"
+            setOnBindEditTextListener { et ->
+                et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
             setOnPreferenceChangeListener { pref, _ ->
                 pref.summary = "••••••••"
                 true
