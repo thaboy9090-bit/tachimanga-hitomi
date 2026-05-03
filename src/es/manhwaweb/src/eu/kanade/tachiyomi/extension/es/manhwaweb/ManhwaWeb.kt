@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -38,6 +39,9 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         private const val PREF_EMAIL = "email"
         private const val PREF_PASSWORD = "password"
     }
+
+    // Override as computed property so the token is always fresh (parent is lazy).
+    override val headers: Headers get() = headersBuilder().build()
 
     override fun headersBuilder() = super.headersBuilder().let { b ->
         val t = cachedToken
@@ -67,7 +71,14 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             val arr = JSONArray(body)
             MangasPage((0 until arr.length()).map { parseMangaItem(arr.getJSONObject(it)) }, false)
         } else {
-            parseLibraryBody(body)
+            val json = JSONObject(body)
+            // /manhwa/nuevos returns { utimos_mangas_creados: [...], utimos_mangas_creados_18: [...], ... }
+            val nuevos = json.optJSONArray("utimos_mangas_creados")
+            if (nuevos != null) {
+                MangasPage((0 until nuevos.length()).map { parseMangaItem(nuevos.getJSONObject(it)) }, false)
+            } else {
+                parseLibraryBody(body)
+            }
         }
     }
 
