@@ -128,17 +128,29 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         }
         .build()
 
-    // Before every request: if token is empty, try loading from SharedPreferences, then auto-login.
+    // Before every request: if token is empty, load from every available source, then auto-login.
     override fun headersBuilder() = super.headersBuilder().let { b ->
-        if (cachedToken.isEmpty()) {
+        if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+            // Try 1: SharedPreferences via reflection
             runCatching {
                 val sp = tryGetSharedPreferences()
                 if (sp != null) {
                     if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
                     if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
-                    cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
+                    if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
                 }
             }
+            // Try 2: file via /proc/self/cmdline (no reflection needed)
+            if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+                runCatching {
+                    loadAuthFromFile()?.let { (email, pass, token) ->
+                        if (cachedEmail.isEmpty()) cachedEmail = email
+                        if (cachedPassword.isEmpty()) cachedPassword = pass
+                        if (cachedToken.isEmpty()) cachedToken = token
+                    }
+                }
+            }
+            // Try 3: auto-login if we have credentials but still no token
             if (cachedToken.isEmpty() && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
                 runCatching {
                     val tok = performLogin(cachedEmail, cachedPassword)
