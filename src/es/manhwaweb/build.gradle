@@ -9,6 +9,5 @@ ext {
 apply from: "$rootDir/common.gradle"
 
 dependencies {
-    compileOnly 'uy.kohesive.injekt:injekt-api:1.0.0'
     compileOnly 'androidx.preference:preference-ktx:1.2.1'
 }

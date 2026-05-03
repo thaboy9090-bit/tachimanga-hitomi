@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.extension.es.manhwaweb
 
-import android.app.Application
-import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
@@ -9,8 +7,6 @@ import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceScreen
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
@@ -27,7 +23,6 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 
-@Suppress("DEPRECATION")
 class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override val name = "ManhwaWeb"
@@ -37,14 +32,15 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     private val api = "https://manhwawebbackend-production.up.railway.app"
 
-    private val prefs: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_${id}", android.content.Context.MODE_PRIVATE)
+    companion object {
+        @Volatile private var cachedToken = ""
+        private const val PREF_TOKEN = "auth_token"
+        private const val PREF_EMAIL = "email"
+        private const val PREF_PASSWORD = "password"
     }
 
-    private val token: String get() = prefs.getString(PREF_TOKEN, "") ?: ""
-
     override fun headersBuilder() = super.headersBuilder().let { b ->
-        val t = token
+        val t = cachedToken
         if (t.isNotEmpty()) b.add("Authorization", "Bearer $t") else b
     }
 
@@ -67,7 +63,6 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun latestUpdatesParse(response: Response): MangasPage {
         val body = response.body!!.string()
-        // /manhwa/nuevos returns a JSON array; /manhwa/library returns {data:[...], next:bool}
         return if (body.trim().startsWith("[")) {
             val arr = JSONArray(body)
             MangasPage((0 until arr.length()).map { parseMangaItem(arr.getJSONObject(it)) }, false)
@@ -245,21 +240,22 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     // ======================== Login / Preferencias ========================
 
-    companion object {
-        private const val PREF_TOKEN = "auth_token"
-        private const val PREF_EMAIL = "email"
-        private const val PREF_PASSWORD = "password"
-    }
-
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        // Use preferenceManager.sharedPreferences — avoids calling android.content.Context methods directly
+        val sp = screen.preferenceManager.sharedPreferences
+
+        // Load cached token from persistent storage on first open
+        if (cachedToken.isEmpty()) {
+            cachedToken = sp?.getString(PREF_TOKEN, "") ?: ""
+        }
+
         EditTextPreference(screen.context).apply {
             key = PREF_EMAIL
             title = "Email"
-            summary = prefs.getString(PREF_EMAIL, "") ?: ""
+            summary = sp?.getString(PREF_EMAIL, "") ?: ""
             setOnPreferenceChangeListener { pref, value ->
-                val v = value.toString()
-                prefs.edit().putString(PREF_EMAIL, v).apply()
-                pref.summary = v
+                sp?.edit()?.putString(PREF_EMAIL, value.toString())?.apply()
+                pref.summary = value.toString()
                 true
             }
         }.also { screen.addPreference(it) }
@@ -267,22 +263,22 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         EditTextPreference(screen.context).apply {
             key = PREF_PASSWORD
             title = "Contraseña"
-            summary = if (prefs.getString(PREF_PASSWORD, "").isNullOrEmpty()) "No configurada" else "••••••••"
+            summary = if (sp?.getString(PREF_PASSWORD, "").isNullOrEmpty()) "No configurada" else "••••••••"
             setOnBindEditTextListener { et ->
                 et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
-            setOnPreferenceChangeListener { pref, _ ->
-                pref.summary = "••••••••"
+            setOnPreferenceChangeListener { _, value ->
+                sp?.edit()?.putString(PREF_PASSWORD, value.toString())?.apply()
                 true
             }
         }.also { screen.addPreference(it) }
 
         Preference(screen.context).apply {
             title = "Iniciar sesión"
-            summary = if (token.isNotEmpty()) "✓ Sesión activa" else "Sin sesión — ingresa email y contraseña primero"
+            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa" else "Sin sesión — ingresa email y contraseña primero"
             setOnPreferenceClickListener { pref ->
-                val email = prefs.getString(PREF_EMAIL, "") ?: ""
-                val pass = prefs.getString(PREF_PASSWORD, "") ?: ""
+                val email = sp?.getString(PREF_EMAIL, "") ?: ""
+                val pass = sp?.getString(PREF_PASSWORD, "") ?: ""
                 if (email.isEmpty() || pass.isEmpty()) {
                     Toast.makeText(screen.context, "Ingresa email y contraseña primero", Toast.LENGTH_SHORT).show()
                     return@setOnPreferenceClickListener true
@@ -292,7 +288,8 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                         val tok = doLogin(email, pass)
                         Handler(Looper.getMainLooper()).post {
                             if (tok != null) {
-                                prefs.edit().putString(PREF_TOKEN, tok).apply()
+                                sp?.edit()?.putString(PREF_TOKEN, tok)?.apply()
+                                cachedToken = tok
                                 pref.summary = "✓ Sesión activa"
                                 Toast.makeText(screen.context, "Login exitoso", Toast.LENGTH_SHORT).show()
                             } else {
