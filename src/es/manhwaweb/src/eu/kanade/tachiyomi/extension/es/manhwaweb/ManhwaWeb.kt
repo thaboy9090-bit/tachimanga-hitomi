@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.extension.es.manhwaweb
 
+import android.app.Application
+import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
@@ -9,6 +11,8 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -39,71 +43,64 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         @Volatile var cachedPassword = ""
         @Volatile var lastViewedMangaId = ""
         @Volatile var lastViewedMangaTitle = ""
+        // Reset to 0 on every app restart; used to force a fresh login on first favorites load.
+        @Volatile var lastLoginTime = 0L
         private const val PREF_TOKEN = "auth_token"
         private const val PREF_EMAIL = "email"
         private const val PREF_PASSWORD = "password"
         private const val SP_NAME = "manhwaweb"
 
-        private fun packageName(): String? = runCatching {
-            java.io.File("/proc/self/cmdline").readBytes()
-                .takeWhile { it != 0.toByte() }.toByteArray()
-                .toString(Charsets.UTF_8).split(":").first().trim()
+        // Primary: named SharedPreferences via the Application context (standard Tachiyomi pattern).
+        private fun prefs(): SharedPreferences? = runCatching {
+            Injekt.get<Application>().getSharedPreferences(SP_NAME, 0)
         }.getOrNull()
 
-        // Read credentials from our dedicated SP file (manhwaweb.xml) — no Context or reflection.
-        // Falls back to the default SP file if the dedicated one doesn't exist yet (migration).
-        fun readCredsFromDisk(): Triple<String, String, String>? = runCatching {
-            val pkg = packageName() ?: return@runCatching null
-            val dedicated = java.io.File("/data/data/$pkg/shared_prefs/$SP_NAME.xml")
-            val fallback = java.io.File("/data/data/$pkg/shared_prefs/${pkg}_preferences.xml")
-            val f = when {
-                dedicated.exists() -> dedicated
-                fallback.exists() -> fallback
-                else -> return@runCatching null
+        fun readCreds(): Triple<String, String, String>? {
+            val sp = prefs()
+            if (sp != null) {
+                val email = sp.getString(PREF_EMAIL, "") ?: ""
+                val pass = sp.getString(PREF_PASSWORD, "") ?: ""
+                if (email.isNotEmpty() && pass.isNotEmpty()) {
+                    return Triple(email, pass, sp.getString(PREF_TOKEN, "") ?: "")
+                }
             }
-            val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance()
-                .newDocumentBuilder().parse(f)
-            val nodes = doc.getElementsByTagName("string")
-            val map = mutableMapOf<String, String>()
-            for (i in 0 until nodes.length) {
-                val n = nodes.item(i)
-                val name = n.attributes?.getNamedItem("name")?.nodeValue ?: continue
-                map[name] = n.textContent
-            }
-            val email = map[PREF_EMAIL]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
-            val pass = map[PREF_PASSWORD]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
-            Triple(email, pass, map[PREF_TOKEN] ?: "")
-        }.getOrNull()
-
-        private fun String.escapeXml() =
-            replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            // Fallback: read the XML file we wrote in previous versions.
+            return runCatching {
+                val pkg = java.io.File("/proc/self/cmdline").readBytes()
+                    .takeWhile { it != 0.toByte() }.toByteArray()
+                    .toString(Charsets.UTF_8).split(":").first().trim()
+                val f = java.io.File("/data/data/$pkg/shared_prefs/$SP_NAME.xml")
+                    .takeIf { it.exists() } ?: return@runCatching null
+                val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+                    .newDocumentBuilder().parse(f)
+                val nodes = doc.getElementsByTagName("string")
+                val map = mutableMapOf<String, String>()
+                for (i in 0 until nodes.length) {
+                    val n = nodes.item(i)
+                    val name = n.attributes?.getNamedItem("name")?.nodeValue ?: continue
+                    map[name] = n.textContent
+                }
+                val email = map[PREF_EMAIL]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
+                val pass = map[PREF_PASSWORD]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
+                Triple(email, pass, map[PREF_TOKEN] ?: "")
+            }.getOrNull()
+        }
 
         fun saveCreds(email: String, password: String, token: String) {
-            runCatching {
-                val pkg = packageName() ?: return@runCatching
-                val dir = java.io.File("/data/data/$pkg/shared_prefs").also { it.mkdirs() }
-                val tmp = java.io.File(dir, "$SP_NAME.xml.tmp")
-                tmp.writeText(
-                    "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" +
-                        "    <string name=\"$PREF_EMAIL\">${email.escapeXml()}</string>\n" +
-                        "    <string name=\"$PREF_PASSWORD\">${password.escapeXml()}</string>\n" +
-                        "    <string name=\"$PREF_TOKEN\">${token.escapeXml()}</string>\n" +
-                        "</map>",
-                    Charsets.UTF_8,
-                )
-                tmp.renameTo(java.io.File(dir, "$SP_NAME.xml"))
-            }
+            prefs()?.edit()
+                ?.putString(PREF_EMAIL, email)
+                ?.putString(PREF_PASSWORD, password)
+                ?.putString(PREF_TOKEN, token)
+                ?.apply()
         }
 
         fun saveToken(token: String) {
-            val current = readCredsFromDisk()
-            saveCreds(current?.first ?: cachedEmail, current?.second ?: cachedPassword, token)
+            prefs()?.edit()?.putString(PREF_TOKEN, token)?.apply()
         }
     }
 
     init {
-        // Read from our dedicated SP file on disk — no reflection, no context needed.
-        readCredsFromDisk()?.let { (email, pass, token) ->
+        readCreds()?.let { (email, pass, token) ->
             if (cachedEmail.isEmpty()) cachedEmail = email
             if (cachedPassword.isEmpty()) cachedPassword = pass
             if (cachedToken.isEmpty()) cachedToken = token
@@ -118,9 +115,9 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             if (response.code != 401 || request.url.encodedPath.endsWith("/user/login")) {
                 return@addInterceptor response
             }
-            // If credentials not in memory, try loading from disk before giving up
+            // If credentials not in memory, reload before giving up
             if (cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-                readCredsFromDisk()?.let { (email, pass, _) ->
+                readCreds()?.let { (email, pass, _) ->
                     if (cachedEmail.isEmpty()) cachedEmail = email
                     if (cachedPassword.isEmpty()) cachedPassword = pass
                 }
@@ -139,13 +136,12 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun headersBuilder() = super.headersBuilder().let { b ->
         if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-            // Try 1: read from our SP file on disk — no reflection needed
-            readCredsFromDisk()?.let { (email, pass, token) ->
+            readCreds()?.let { (email, pass, token) ->
                 if (cachedEmail.isEmpty()) cachedEmail = email
                 if (cachedPassword.isEmpty()) cachedPassword = pass
                 if (cachedToken.isEmpty()) cachedToken = token
             }
-            // Try 2: auto-login if we have email+password but no token
+            // Auto-login if we have email+password but still no token
             if (cachedToken.isEmpty() && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
                 runCatching {
                     val tok = performLogin(cachedEmail, cachedPassword)
@@ -193,6 +189,19 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (filters.filterIsInstance<FavoritesFilter>().firstOrNull()?.state == true) {
+            // Force a fresh login on the first favorites request of each session.
+            // The endpoint returns 200 with empty data for expired tokens (not 401),
+            // so the 401 interceptor never fires — we must proactively refresh here.
+            if (lastLoginTime == 0L && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
+                runCatching {
+                    val tok = performLogin(cachedEmail, cachedPassword)
+                    if (tok != null) {
+                        cachedToken = tok
+                        lastLoginTime = System.currentTimeMillis()
+                        saveToken(tok)
+                    }
+                }
+            }
             return GET("$api/follow/manhwa/siguiendo?page=${page - 1}", headersBuilder().build())
         }
 
@@ -458,9 +467,9 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Login / Preferencias ========================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        // Refresh cached creds from disk in case they were saved in a previous session.
+        // Refresh cached creds in case they were saved in a previous session.
         if (cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-            readCredsFromDisk()?.let { (email, pass, token) ->
+            readCreds()?.let { (email, pass, token) ->
                 if (cachedEmail.isEmpty()) cachedEmail = email
                 if (cachedPassword.isEmpty()) cachedPassword = pass
                 if (cachedToken.isEmpty()) cachedToken = token
