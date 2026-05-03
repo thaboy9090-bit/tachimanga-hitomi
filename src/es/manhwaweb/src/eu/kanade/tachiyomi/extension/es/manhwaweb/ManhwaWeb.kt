@@ -33,14 +33,13 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     private val api = "https://manhwawebbackend-production.up.railway.app"
 
     init {
-        // ActivityThread is a hidden class — use reflection to avoid compile errors.
+        // Mihon stores extension prefs in "source_<id>" — not the app default prefs.
         runCatching {
             val ctx = Class.forName("android.app.ActivityThread")
                 .getMethod("currentApplication")
                 .invoke(null) as? android.content.Context
             if (ctx != null && cachedToken.isEmpty()) {
-                @Suppress("DEPRECATION")
-                val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
+                val sp = ctx.getSharedPreferences("source_$id", android.content.Context.MODE_PRIVATE)
                 cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
             }
         }
@@ -304,8 +303,8 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Login / Preferencias ========================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        @Suppress("DEPRECATION")
-        val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(screen.context)
+        // Use the PreferenceManager's own SharedPreferences — Mihon sets its name to "source_<id>".
+        val sp = screen.preferenceManager.sharedPreferences!!
 
         if (cachedToken.isEmpty()) {
             cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
