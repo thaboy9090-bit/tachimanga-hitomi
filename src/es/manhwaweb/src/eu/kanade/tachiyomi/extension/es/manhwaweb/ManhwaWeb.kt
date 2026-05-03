@@ -111,7 +111,10 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             return MangasPage((0 until arr.length()).map { parseMangaItem(arr.getJSONObject(it)) }, false)
         }
         val json = JSONObject(body)
-        val arr = json.optJSONArray("data") ?: JSONArray()
+        // Try every key that any endpoint might use for the items array
+        val arr = listOf("data", "manhwas", "siguiendo", "result", "items", "list")
+            .firstNotNullOfOrNull { key -> json.optJSONArray(key)?.takeIf { it.length() > 0 } }
+            ?: JSONArray()
         return MangasPage(
             (0 until arr.length()).map { parseMangaItem(arr.getJSONObject(it)) },
             json.optBoolean("next", false),
@@ -119,17 +122,17 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     }
 
     private fun parseMangaItem(obj: JSONObject): SManga {
-        // Handles both library format (_id, name_esp, _imagen) and
-        // latest/new-manhwa format (id_rel, name_manhwa, img)
-        val id = obj.optString("_id").ifEmpty { obj.optString("real_id") }
-            .ifEmpty { obj.optString("id_rel") }.ifEmpty { obj.optString("id_manhwa") }
+        // Some endpoints wrap the manga inside a "manhwa" sub-object (e.g. follow records)
+        val root = obj.optJSONObject("manhwa") ?: obj
+        val id = root.optString("_id").ifEmpty { root.optString("real_id") }
+            .ifEmpty { root.optString("id_rel") }.ifEmpty { root.optString("id_manhwa") }
         return SManga.create().apply {
             url = "/$id"
-            title = obj.optString("name_esp").ifEmpty { obj.optString("the_real_name") }
-                .ifEmpty { obj.optString("name_manhwa") }.ifEmpty { id }
-            thumbnail_url = obj.optString("_imagen").ifEmpty { obj.optString("img") }
+            title = root.optString("name_esp").ifEmpty { root.optString("the_real_name") }
+                .ifEmpty { root.optString("name_manhwa") }.ifEmpty { id }
+            thumbnail_url = root.optString("_imagen").ifEmpty { root.optString("img") }
                 .takeIf { it.isNotEmpty() }
-            status = parseStatus(obj.optString("_status"))
+            status = parseStatus(root.optString("_status"))
         }
     }
 
