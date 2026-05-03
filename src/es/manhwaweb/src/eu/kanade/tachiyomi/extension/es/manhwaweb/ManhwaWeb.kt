@@ -467,14 +467,15 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             }
         }
 
-        EditTextPreference(screen.context).apply {
+        val emailPref = EditTextPreference(screen.context).apply {
             key = PREF_EMAIL
             title = "Email"
             summary = cachedEmail
+            if (cachedEmail.isNotEmpty()) text = cachedEmail
             setOnPreferenceChangeListener { pref: Preference, value: Any ->
-                val email = value.toString()
+                val email = value.toString().trim()
+                if (email.isEmpty()) return@setOnPreferenceChangeListener false
                 cachedEmail = email
-                if (cachedPassword.isNotEmpty()) saveCreds(email, cachedPassword, cachedToken)
                 pref.summary = email
                 true
             }
@@ -488,12 +489,13 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                 et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
             setOnPreferenceChangeListener { pref: Preference, value: Any ->
-                val email = cachedEmail
+                val email = cachedEmail.ifEmpty { emailPref.text ?: "" }.trim()
                 val pass = value.toString()
                 if (email.isEmpty()) {
                     Toast.makeText(screen.context, "Ingresa tu email primero", Toast.LENGTH_SHORT).show()
                     return@setOnPreferenceChangeListener true
                 }
+                if (cachedEmail != email) cachedEmail = email
                 cachedPassword = pass
                 Thread {
                     runCatching {
