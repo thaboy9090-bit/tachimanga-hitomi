@@ -16,7 +16,6 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
-import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -42,9 +41,8 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         private const val PREF_PASSWORD = "password"
     }
 
-    // Override as computed property so the token is always fresh (parent is lazy).
-    override val headers: Headers get() = headersBuilder().build()
-
+    // headersBuilder() reads cachedToken at call time — use headersBuilder().build()
+    // on every request instead of the parent's lazy `headers` property.
     override fun headersBuilder() = super.headersBuilder().let { b ->
         val t = cachedToken
         if (t.isNotEmpty()) b.add("Authorization", "Bearer $t") else b
@@ -53,7 +51,10 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Popular ========================
 
     override fun popularMangaRequest(page: Int): Request =
-        GET("$api/manhwa/library?buscar=&estado=&tipo=&erotico=&demografia=&order_item=visitas&order_dir=desc&page=${page - 1}&generes=", headers)
+        GET(
+            "$api/manhwa/library?buscar=&estado=&tipo=&erotico=&demografia=&order_item=visitas&order_dir=desc&page=${page - 1}&generes=",
+            headersBuilder().build(),
+        )
 
     override fun popularMangaParse(response: Response): MangasPage =
         parseLibraryResponse(response)
@@ -62,9 +63,12 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun latestUpdatesRequest(page: Int): Request =
         if (page == 1) {
-            GET("$api/manhwa/nuevos", headers)
+            GET("$api/manhwa/nuevos", headersBuilder().build())
         } else {
-            GET("$api/manhwa/library?buscar=&estado=&tipo=&erotico=&demografia=&order_item=reciente&order_dir=desc&page=${page - 1}&generes=", headers)
+            GET(
+                "$api/manhwa/library?buscar=&estado=&tipo=&erotico=&demografia=&order_item=reciente&order_dir=desc&page=${page - 1}&generes=",
+                headersBuilder().build(),
+            )
         }
 
     override fun latestUpdatesParse(response: Response): MangasPage {
@@ -88,7 +92,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (filters.filterIsInstance<FavoritesFilter>().firstOrNull()?.state == true) {
-            return GET("$api/follow/manhwa/siguiendo?page=${page - 1}", headers)
+            return GET("$api/follow/manhwa/siguiendo?page=${page - 1}", headersBuilder().build())
         }
 
         val estado = filters.filterIsInstance<EstadoFilter>().firstOrNull()?.toApiValue() ?: ""
@@ -98,7 +102,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
         return GET(
             "$api/manhwa/library?buscar=${query.trim()}&estado=$estado&tipo=$tipo&erotico=$erotico&demografia=&order_item=$order&order_dir=desc&page=${page - 1}&generes=",
-            headers,
+            headersBuilder().build(),
         )
     }
 
@@ -135,7 +139,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun mangaDetailsRequest(manga: SManga): Request {
         lastViewedMangaId = manga.url.removePrefix("/")
-        return GET("$api/manhwa/see/${manga.url.removePrefix("/")}", headers)
+        return GET("$api/manhwa/see/${manga.url.removePrefix("/")}", headersBuilder().build())
     }
 
     override fun mangaDetailsParse(response: Response): SManga {
@@ -193,6 +197,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Pages ========================
 
     override fun pageListRequest(chapter: SChapter): Request {
+        // Fire read-sync in background when user opens a chapter.
         if (cachedToken.isNotEmpty()) {
             val raw = chapter.url.removePrefix("/")
             val lastDash = raw.lastIndexOf('-')
@@ -213,7 +218,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                             client.newCall(
                                 Request.Builder()
                                     .url("$api/follow/leidosmanhwas")
-                                    .headers(headers)
+                                    .headers(headersBuilder().build())
                                     .post(body)
                                     .build(),
                             ).execute().close()
@@ -222,7 +227,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                 }
             }
         }
-        return GET("$api/chapters/see/${chapter.url.removePrefix("/")}", headers)
+        return GET("$api/chapters/see/${chapter.url.removePrefix("/")}", headersBuilder().build())
     }
 
     override fun pageListParse(response: Response): List<Page> {
@@ -288,8 +293,6 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Login / Preferencias ========================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        // android.preference.PreferenceManager is deprecated but available in android.jar (compileSdk 34)
-        // and avoids calling getPreferenceManager() which is absent from the extensions-lib PreferenceScreen stub.
         @Suppress("DEPRECATION")
         val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(screen.context)
 
@@ -347,8 +350,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             }
         }.also { screen.addPreference(it) }
 
-        // Follow toggle — abre el último manga visto, su ID ya está pre-cargado.
-        // Guardar activa el toggle (follow si no seguido, unfollow si ya seguido).
+        // Follow toggle: pre-filled with last viewed manga ID, saving calls the toggle endpoint.
         EditTextPreference(screen.context).apply {
             key = "follow_toggle"
             title = "Seguir / Dejar de seguir"
@@ -373,7 +375,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                         val resp = client.newCall(
                             Request.Builder()
                                 .url("$api/follow/pushdeletemanhwa")
-                                .headers(headers)
+                                .headers(headersBuilder().build())
                                 .post(body)
                                 .build(),
                         ).execute()
@@ -397,7 +399,6 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             }
         }.also { pref ->
             screen.addPreference(pref)
-            // Pre-fill with the last viewed manga ID so user just taps OK
             if (lastViewedMangaId.isNotEmpty()) pref.setText(lastViewedMangaId)
         }
     }
@@ -411,7 +412,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
         val request = Request.Builder()
             .url("$api/user/login")
-            .headers(headers)
+            .headers(headersBuilder().build())
             .post(body)
             .build()
 
