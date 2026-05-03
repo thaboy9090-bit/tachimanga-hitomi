@@ -63,28 +63,29 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         }
     }
 
-    // Auto-login interceptor: when any authenticated request gets a 401, re-login and retry once.
+    // Retry-on-401 interceptor: re-logins and retries once when a token is expired.
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain ->
             val request = chain.request()
             val response = chain.proceed(request)
-            if (response.code != 401 || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+            // Skip non-401 and skip the login endpoint itself (avoid infinite loop)
+            if (response.code != 401 || request.url.encodedPath.endsWith("/user/login")) {
                 return@addInterceptor response
             }
-            val newToken = runCatching {
-                val body = JSONObject()
-                    .put("email", cachedEmail)
-                    .put("password", cachedPassword)
-                    .toString()
-                    .toRequestBody("application/json".toMediaType())
-                val loginResp = network.client.newCall(
-                    Request.Builder().url("$api/user/login").post(body).build(),
-                ).execute()
-                if (!loginResp.isSuccessful) { loginResp.close(); return@runCatching null }
-                val json = JSONObject(loginResp.body!!.string())
-                loginResp.close()
-                (json.optJSONObject("data") ?: json).optString("jwt").takeIf { it.isNotEmpty() }
-            }.getOrNull() ?: return@addInterceptor response
+            // Load credentials from SharedPreferences if not in memory yet
+            if (cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+                runCatching {
+                    val sp = tryGetSharedPreferences()
+                    if (sp != null) {
+                        if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
+                        if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
+                    }
+                }
+            }
+            if (cachedEmail.isEmpty() || cachedPassword.isEmpty()) return@addInterceptor response
+
+            val newToken = runCatching { performLogin(cachedEmail, cachedPassword) }.getOrNull()
+                ?: return@addInterceptor response
 
             cachedToken = newToken
             runCatching { tryGetSharedPreferences()?.edit()?.putString(PREF_TOKEN, newToken)?.apply() }
@@ -93,7 +94,27 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         }
         .build()
 
+    // Before every request: if token is empty, try loading from SharedPreferences, then auto-login.
     override fun headersBuilder() = super.headersBuilder().let { b ->
+        if (cachedToken.isEmpty()) {
+            runCatching {
+                val sp = tryGetSharedPreferences()
+                if (sp != null) {
+                    if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
+                    if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
+                    cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
+                }
+            }
+            if (cachedToken.isEmpty() && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
+                runCatching {
+                    val tok = performLogin(cachedEmail, cachedPassword)
+                    if (tok != null) {
+                        cachedToken = tok
+                        runCatching { tryGetSharedPreferences()?.edit()?.putString(PREF_TOKEN, tok)?.apply() }
+                    }
+                }
+            }
+        }
         val t = cachedToken
         if (t.isNotEmpty()) b.add("Authorization", "Bearer $t") else b
     }
@@ -508,24 +529,21 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         }
     }
 
-    private fun doLogin(email: String, password: String): String? {
+    // Uses network.client directly (no interceptors) so login can never trigger itself recursively.
+    private fun performLogin(email: String, password: String): String? {
         val body = JSONObject()
             .put("email", email)
             .put("password", password)
             .toString()
             .toRequestBody("application/json".toMediaType())
-
-        val request = Request.Builder()
-            .url("$api/user/login")
-            .headers(headersBuilder().build())
-            .post(body)
-            .build()
-
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) return null
-
+        val response = network.client.newCall(
+            Request.Builder().url("$api/user/login").post(body).build(),
+        ).execute()
+        if (!response.isSuccessful) { response.close(); return null }
         val json = JSONObject(response.body!!.string())
-        val data = json.optJSONObject("data") ?: json
-        return data.optString("jwt").takeIf { it.isNotEmpty() }
+        response.close()
+        return (json.optJSONObject("data") ?: json).optString("jwt").takeIf { it.isNotEmpty() }
     }
+
+    private fun doLogin(email: String, password: String): String? = performLogin(email, password)
 }
