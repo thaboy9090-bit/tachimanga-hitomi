@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.extension.es.manhwaweb
 
-import android.app.Application
-import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
@@ -11,8 +9,6 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.ConfigurableSource
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -43,59 +39,59 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         @Volatile var cachedPassword = ""
         @Volatile var lastViewedMangaId = ""
         @Volatile var lastViewedMangaTitle = ""
-        // Reset to 0 on every app restart; used to force a fresh login on first favorites load.
+        // Resets to 0 on every app restart; forces a fresh login on the first favorites load.
         @Volatile var lastLoginTime = 0L
         private const val PREF_TOKEN = "auth_token"
         private const val PREF_EMAIL = "email"
         private const val PREF_PASSWORD = "password"
         private const val SP_NAME = "manhwaweb"
 
-        // Primary: named SharedPreferences via the Application context (standard Tachiyomi pattern).
-        private fun prefs(): SharedPreferences? = runCatching {
-            Injekt.get<Application>().getSharedPreferences(SP_NAME, 0)
+        private fun appPkg(): String? = runCatching {
+            java.io.File("/proc/self/cmdline").readBytes()
+                .takeWhile { it != 0.toByte() }.toByteArray()
+                .toString(Charsets.UTF_8).split(":").first().trim()
         }.getOrNull()
 
-        fun readCreds(): Triple<String, String, String>? {
-            val sp = prefs()
-            if (sp != null) {
-                val email = sp.getString(PREF_EMAIL, "") ?: ""
-                val pass = sp.getString(PREF_PASSWORD, "") ?: ""
-                if (email.isNotEmpty() && pass.isNotEmpty()) {
-                    return Triple(email, pass, sp.getString(PREF_TOKEN, "") ?: "")
-                }
+        fun readCreds(): Triple<String, String, String>? = runCatching {
+            val pkg = appPkg() ?: return@runCatching null
+            val f = java.io.File("/data/data/$pkg/shared_prefs/$SP_NAME.xml")
+                .takeIf { it.exists() } ?: return@runCatching null
+            val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+                .newDocumentBuilder().parse(f)
+            val nodes = doc.getElementsByTagName("string")
+            val map = mutableMapOf<String, String>()
+            for (i in 0 until nodes.length) {
+                val n = nodes.item(i)
+                val name = n.attributes?.getNamedItem("name")?.nodeValue ?: continue
+                map[name] = n.textContent
             }
-            // Fallback: read the XML file we wrote in previous versions.
-            return runCatching {
-                val pkg = java.io.File("/proc/self/cmdline").readBytes()
-                    .takeWhile { it != 0.toByte() }.toByteArray()
-                    .toString(Charsets.UTF_8).split(":").first().trim()
-                val f = java.io.File("/data/data/$pkg/shared_prefs/$SP_NAME.xml")
-                    .takeIf { it.exists() } ?: return@runCatching null
-                val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance()
-                    .newDocumentBuilder().parse(f)
-                val nodes = doc.getElementsByTagName("string")
-                val map = mutableMapOf<String, String>()
-                for (i in 0 until nodes.length) {
-                    val n = nodes.item(i)
-                    val name = n.attributes?.getNamedItem("name")?.nodeValue ?: continue
-                    map[name] = n.textContent
-                }
-                val email = map[PREF_EMAIL]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
-                val pass = map[PREF_PASSWORD]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
-                Triple(email, pass, map[PREF_TOKEN] ?: "")
-            }.getOrNull()
-        }
+            val email = map[PREF_EMAIL]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
+            val pass = map[PREF_PASSWORD]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
+            Triple(email, pass, map[PREF_TOKEN] ?: "")
+        }.getOrNull()
+
+        private fun String.esc() =
+            replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
         fun saveCreds(email: String, password: String, token: String) {
-            prefs()?.edit()
-                ?.putString(PREF_EMAIL, email)
-                ?.putString(PREF_PASSWORD, password)
-                ?.putString(PREF_TOKEN, token)
-                ?.apply()
+            runCatching {
+                val pkg = appPkg() ?: return@runCatching
+                val dir = java.io.File("/data/data/$pkg/shared_prefs").also { it.mkdirs() }
+                // Write directly — tmp+renameTo can silently fail on some Android configs.
+                java.io.File(dir, "$SP_NAME.xml").writeText(
+                    "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" +
+                        "    <string name=\"$PREF_EMAIL\">${email.esc()}</string>\n" +
+                        "    <string name=\"$PREF_PASSWORD\">${password.esc()}</string>\n" +
+                        "    <string name=\"$PREF_TOKEN\">${token.esc()}</string>\n" +
+                        "</map>",
+                    Charsets.UTF_8,
+                )
+            }
         }
 
         fun saveToken(token: String) {
-            prefs()?.edit()?.putString(PREF_TOKEN, token)?.apply()
+            val c = readCreds()
+            saveCreds(c?.first ?: cachedEmail, c?.second ?: cachedPassword, token)
         }
     }
 
