@@ -33,13 +33,14 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     private val api = "https://manhwawebbackend-production.up.railway.app"
 
     init {
-        // Load persisted token at startup so requests include auth without needing
-        // the user to open the preference screen first.
+        // ActivityThread is a hidden API — access via reflection to avoid compile errors.
         runCatching {
-            @Suppress("DEPRECATION")
-            val app = android.app.ActivityThread.currentApplication()
-            if (app != null && cachedToken.isEmpty()) {
-                val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(app)
+            val ctx = Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication")
+                .invoke(null) as? android.content.Context
+            if (ctx != null && cachedToken.isEmpty()) {
+                @Suppress("DEPRECATION")
+                val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
                 cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
             }
         }
