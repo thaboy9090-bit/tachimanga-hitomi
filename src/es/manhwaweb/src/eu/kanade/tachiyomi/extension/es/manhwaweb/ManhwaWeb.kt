@@ -35,6 +35,8 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     companion object {
         @Volatile private var cachedToken = ""
+        @Volatile var lastViewedMangaId = ""
+        @Volatile var lastViewedMangaTitle = ""
         private const val PREF_TOKEN = "auth_token"
         private const val PREF_EMAIL = "email"
         private const val PREF_PASSWORD = "password"
@@ -131,15 +133,19 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     // ======================== Details ========================
 
-    override fun mangaDetailsRequest(manga: SManga): Request =
-        GET("$api/manhwa/see/${manga.url.removePrefix("/")}", headers)
+    override fun mangaDetailsRequest(manga: SManga): Request {
+        lastViewedMangaId = manga.url.removePrefix("/")
+        return GET("$api/manhwa/see/${manga.url.removePrefix("/")}", headers)
+    }
 
     override fun mangaDetailsParse(response: Response): SManga {
         val obj = JSONObject(response.body!!.string())
         val id = obj.optString("_id")
+        val title = obj.optString("name_esp").ifEmpty { obj.optString("the_real_name") }.ifEmpty { id }
+        lastViewedMangaTitle = title
         return SManga.create().apply {
             url = "/$id"
-            title = obj.optString("name_esp").ifEmpty { obj.optString("the_real_name") }.ifEmpty { id }
+            this.title = title
             thumbnail_url = obj.optString("_imagen").takeIf { it.isNotEmpty() }
             description = obj.optString("_sinopsis").takeIf { it.isNotEmpty() }
             status = parseStatus(obj.optString("_status"))
@@ -186,8 +192,38 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     // ======================== Pages ========================
 
-    override fun pageListRequest(chapter: SChapter): Request =
-        GET("$api/chapters/see/${chapter.url.removePrefix("/")}", headers)
+    override fun pageListRequest(chapter: SChapter): Request {
+        if (cachedToken.isNotEmpty()) {
+            val raw = chapter.url.removePrefix("/")
+            val lastDash = raw.lastIndexOf('-')
+            if (lastDash > 0) {
+                val mangaId = raw.substring(0, lastDash)
+                val chapterNum = raw.substring(lastDash + 1).toDoubleOrNull()
+                if (chapterNum != null) {
+                    val chapterVal: Number = if (chapterNum == chapterNum.toLong().toDouble())
+                        chapterNum.toLong() else chapterNum
+                    Thread {
+                        runCatching {
+                            val body = JSONObject()
+                                .put("manhwa", mangaId)
+                                .put("chapter", chapterVal)
+                                .put("order", "b")
+                                .toString()
+                                .toRequestBody("application/json".toMediaType())
+                            client.newCall(
+                                Request.Builder()
+                                    .url("$api/follow/leidosmanhwas")
+                                    .headers(headers)
+                                    .post(body)
+                                    .build(),
+                            ).execute().close()
+                        }
+                    }.start()
+                }
+            }
+        }
+        return GET("$api/chapters/see/${chapter.url.removePrefix("/")}", headers)
+    }
 
     override fun pageListParse(response: Response): List<Page> {
         val obj = JSONObject(response.body!!.string())
@@ -310,6 +346,60 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                 true
             }
         }.also { screen.addPreference(it) }
+
+        // Follow toggle — abre el último manga visto, su ID ya está pre-cargado.
+        // Guardar activa el toggle (follow si no seguido, unfollow si ya seguido).
+        EditTextPreference(screen.context).apply {
+            key = "follow_toggle"
+            title = "Seguir / Dejar de seguir"
+            summary = if (lastViewedMangaId.isNotEmpty())
+                "$lastViewedMangaTitle\n$lastViewedMangaId"
+            else
+                "Abre un manga primero, luego vuelve aquí"
+            setOnPreferenceChangeListener { pref: Preference, value: Any ->
+                val mangaId = value.toString().trim()
+                if (mangaId.isEmpty() || cachedToken.isEmpty()) {
+                    Toast.makeText(screen.context, "Sin sesión o ID vacío", Toast.LENGTH_SHORT).show()
+                    return@setOnPreferenceChangeListener false
+                }
+                Thread {
+                    runCatching {
+                        val body = JSONObject()
+                            .put("manhwa", mangaId)
+                            .put("manhwa_type", "siguiendo")
+                            .put("order", "asc")
+                            .toString()
+                            .toRequestBody("application/json".toMediaType())
+                        val resp = client.newCall(
+                            Request.Builder()
+                                .url("$api/follow/pushdeletemanhwa")
+                                .headers(headers)
+                                .post(body)
+                                .build(),
+                        ).execute()
+                        val ok = resp.isSuccessful
+                        resp.close()
+                        Handler(Looper.getMainLooper()).post {
+                            if (ok) {
+                                pref.summary = "Toggled: $mangaId"
+                                Toast.makeText(screen.context, "Follow toggled ✓", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(screen.context, "Error al hacer follow", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }.onFailure { e ->
+                        Handler(Looper.getMainLooper()).post {
+                            Toast.makeText(screen.context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }.start()
+                true
+            }
+        }.also { pref ->
+            screen.addPreference(pref)
+            // Pre-fill with the last viewed manga ID so user just taps OK
+            if (lastViewedMangaId.isNotEmpty()) pref.setText(lastViewedMangaId)
+        }
     }
 
     private fun doLogin(email: String, password: String): String? {
