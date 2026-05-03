@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.extension.es.manhwaweb
 
-import android.app.Application
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
@@ -10,8 +9,6 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.ConfigurableSource
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -36,11 +33,14 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     private val api = "https://manhwawebbackend-production.up.railway.app"
 
     init {
+        // ActivityThread is a hidden class — use reflection to avoid compile errors.
         runCatching {
-            if (cachedToken.isEmpty()) {
+            val ctx = Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication")
+                .invoke(null) as? android.content.Context
+            if (ctx != null && cachedToken.isEmpty()) {
                 @Suppress("DEPRECATION")
-                val sp = android.preference.PreferenceManager
-                    .getDefaultSharedPreferences(Injekt.get<Application>())
+                val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
                 cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
             }
         }
