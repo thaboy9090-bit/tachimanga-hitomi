@@ -43,7 +43,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         private const val PREF_TOKEN = "auth_token"
         private const val PREF_EMAIL = "email"
         private const val PREF_PASSWORD = "password"
-        private const val AUTH_FILE = "manhwaweb_auth"
+        private const val SP_NAME = "manhwaweb"
 
         private fun packageName(): String? = runCatching {
             java.io.File("/proc/self/cmdline").readBytes()
@@ -51,26 +51,17 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                 .toString(Charsets.UTF_8).split(":").first().trim()
         }.getOrNull()
 
-        fun tryGetSharedPreferences(): android.content.SharedPreferences? {
-            cachedSp?.let { return it }
-            return runCatching {
-                val ctx = Class.forName("android.app.ActivityThread")
-                    .getMethod("currentApplication")
-                    .invoke(null) as? android.content.Context
-                if (ctx != null) {
-                    @Suppress("DEPRECATION")
-                    android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
-                        .also { cachedSp = it }
-                } else null
-            }.getOrNull()
-        }
-
-        // Read credentials directly from the SharedPreferences XML file — no Context or reflection needed.
-        // Android always writes SP to /data/data/<pkg>/shared_prefs/<pkg>_preferences.xml.
+        // Read credentials from our dedicated SP file (manhwaweb.xml) — no Context or reflection.
+        // Falls back to the default SP file if the dedicated one doesn't exist yet (migration).
         fun readCredsFromDisk(): Triple<String, String, String>? = runCatching {
             val pkg = packageName() ?: return@runCatching null
-            val f = java.io.File("/data/data/$pkg/shared_prefs/${pkg}_preferences.xml")
-            if (!f.exists()) return@runCatching null
+            val dedicated = java.io.File("/data/data/$pkg/shared_prefs/$SP_NAME.xml")
+            val fallback = java.io.File("/data/data/$pkg/shared_prefs/${pkg}_preferences.xml")
+            val f = when {
+                dedicated.exists() -> dedicated
+                fallback.exists() -> fallback
+                else -> return@runCatching null
+            }
             val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance()
                 .newDocumentBuilder().parse(f)
             val nodes = doc.getElementsByTagName("string")
@@ -85,49 +76,25 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             Triple(email, pass, map[PREF_TOKEN] ?: "")
         }.getOrNull()
 
-        private fun authFile(): java.io.File? = runCatching {
-            java.io.File("/data/data/${packageName()}/files/$AUTH_FILE")
-        }.getOrNull()
-
-        fun saveAuthToFile(email: String, password: String, token: String) {
-            runCatching {
-                val f = authFile() ?: return@runCatching
-                f.parentFile?.mkdirs()
-                f.writeText("$email\n$password\n$token")
-            }
+        fun saveCreds(email: String, password: String, token: String) {
+            cachedSp?.edit()
+                ?.putString(PREF_EMAIL, email)
+                ?.putString(PREF_PASSWORD, password)
+                ?.putString(PREF_TOKEN, token)
+                ?.apply()
         }
 
-        fun loadAuthFromFile(): Triple<String, String, String>? = runCatching {
-            val lines = authFile()?.readLines() ?: return@runCatching null
-            if (lines.size >= 3) Triple(lines[0], lines[1], lines[2]) else null
-        }.getOrNull()
+        fun saveToken(token: String) {
+            cachedSp?.edit()?.putString(PREF_TOKEN, token)?.apply()
+        }
     }
 
     init {
-        // Layer 1: SharedPreferences via reflection (or cached reference)
-        runCatching {
-            val sp = tryGetSharedPreferences() ?: return@runCatching
-            if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
-            if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
-            if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
-        }
-        // Layer 2: read SP XML file directly from disk — works even when reflection is blocked
-        if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-            readCredsFromDisk()?.let { (email, pass, token) ->
-                if (cachedEmail.isEmpty()) cachedEmail = email
-                if (cachedPassword.isEmpty()) cachedPassword = pass
-                if (cachedToken.isEmpty()) cachedToken = token
-            }
-        }
-        // Layer 3: custom auth file (backup)
-        if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-            runCatching {
-                loadAuthFromFile()?.let { (email, pass, token) ->
-                    if (cachedEmail.isEmpty()) cachedEmail = email
-                    if (cachedPassword.isEmpty()) cachedPassword = pass
-                    if (cachedToken.isEmpty()) cachedToken = token
-                }
-            }
+        // Read from our dedicated SP file on disk — no reflection, no context needed.
+        readCredsFromDisk()?.let { (email, pass, token) ->
+            if (cachedEmail.isEmpty()) cachedEmail = email
+            if (cachedPassword.isEmpty()) cachedPassword = pass
+            if (cachedToken.isEmpty()) cachedToken = token
         }
     }
 
@@ -136,18 +103,14 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         .addInterceptor { chain ->
             val request = chain.request()
             val response = chain.proceed(request)
-            // Skip non-401 and skip the login endpoint itself (avoid infinite loop)
             if (response.code != 401 || request.url.encodedPath.endsWith("/user/login")) {
                 return@addInterceptor response
             }
-            // Load credentials from SharedPreferences if not in memory yet
+            // If credentials not in memory, try loading from disk before giving up
             if (cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-                runCatching {
-                    val sp = tryGetSharedPreferences()
-                    if (sp != null) {
-                        if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
-                        if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
-                    }
+                readCredsFromDisk()?.let { (email, pass, _) ->
+                    if (cachedEmail.isEmpty()) cachedEmail = email
+                    if (cachedPassword.isEmpty()) cachedPassword = pass
                 }
             }
             if (cachedEmail.isEmpty() || cachedPassword.isEmpty()) return@addInterceptor response
@@ -156,26 +119,21 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                 ?: return@addInterceptor response
 
             cachedToken = newToken
-            runCatching { tryGetSharedPreferences()?.edit()?.putString(PREF_TOKEN, newToken)?.apply() }
-            saveAuthToFile(cachedEmail, cachedPassword, newToken)
+            saveToken(newToken)
             response.close()
             chain.proceed(request.newBuilder().header("Authorization", "Bearer $newToken").build())
         }
         .build()
 
-    // Before every request: if token is empty, load from every available source, then auto-login.
     override fun headersBuilder() = super.headersBuilder().let { b ->
         if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-            // Try 1: SharedPreferences via reflection (or cached reference)
-            runCatching {
-                val sp = tryGetSharedPreferences()
-                if (sp != null) {
-                    if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
-                    if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
-                    if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
-                }
+            // Try 1: cached SP reference (set when setupPreferenceScreen was opened this session)
+            cachedSp?.let { sp ->
+                if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
+                if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
+                if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
             }
-            // Try 2: read SP XML file directly from disk — works even when reflection is blocked
+            // Try 2: read from our SP file on disk — no reflection needed
             if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
                 readCredsFromDisk()?.let { (email, pass, token) ->
                     if (cachedEmail.isEmpty()) cachedEmail = email
@@ -183,24 +141,13 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                     if (cachedToken.isEmpty()) cachedToken = token
                 }
             }
-            // Try 3: custom auth file (backup)
-            if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-                runCatching {
-                    loadAuthFromFile()?.let { (email, pass, token) ->
-                        if (cachedEmail.isEmpty()) cachedEmail = email
-                        if (cachedPassword.isEmpty()) cachedPassword = pass
-                        if (cachedToken.isEmpty()) cachedToken = token
-                    }
-                }
-            }
-            // Try 4: auto-login if we have credentials but still no token
+            // Try 3: auto-login if we have email+password but no token
             if (cachedToken.isEmpty() && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
                 runCatching {
                     val tok = performLogin(cachedEmail, cachedPassword)
                     if (tok != null) {
                         cachedToken = tok
-                        runCatching { tryGetSharedPreferences()?.edit()?.putString(PREF_TOKEN, tok)?.apply() }
-                        saveAuthToFile(cachedEmail, cachedPassword, tok)
+                        saveToken(tok)
                     }
                 }
             }
@@ -507,27 +454,28 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Login / Preferencias ========================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        @Suppress("DEPRECATION")
-        val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(screen.context)
+        // Use a dedicated named SP so we always know the exact file name on disk (manhwaweb.xml).
+        val sp = screen.context.getSharedPreferences(SP_NAME, android.content.Context.MODE_PRIVATE)
         cachedSp = sp
 
-        if (cachedToken.isEmpty()) {
-            cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
-        }
+        // Load all three on every open so cachedEmail/cachedPassword are always populated.
+        if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
+        if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
+        if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
 
         EditTextPreference(screen.context).apply {
             key = PREF_EMAIL
             title = "Email"
-            summary = sp.getString(PREF_EMAIL, "") ?: ""
+            summary = cachedEmail.ifEmpty { sp.getString(PREF_EMAIL, "") ?: "" }
             setOnPreferenceChangeListener { pref: Preference, value: Any ->
-                sp.edit().putString(PREF_EMAIL, value.toString()).apply()
-                cachedEmail = value.toString()
-                pref.summary = value.toString()
+                val email = value.toString()
+                sp.edit().putString(PREF_EMAIL, email).apply()
+                cachedEmail = email
+                pref.summary = email
                 true
             }
         }.also { screen.addPreference(it) }
 
-        // Saving the password triggers login automatically.
         EditTextPreference(screen.context).apply {
             key = PREF_PASSWORD
             title = "Contraseña"
@@ -538,20 +486,21 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             setOnPreferenceChangeListener { pref: Preference, value: Any ->
                 val email = sp.getString(PREF_EMAIL, "") ?: ""
                 val pass = value.toString()
-                sp.edit().putString(PREF_PASSWORD, pass).apply()
-                cachedPassword = pass
                 if (email.isEmpty()) {
                     Toast.makeText(screen.context, "Ingresa tu email primero", Toast.LENGTH_SHORT).show()
                     return@setOnPreferenceChangeListener true
                 }
+                sp.edit().putString(PREF_PASSWORD, pass).apply()
+                cachedPassword = pass
                 Thread {
                     runCatching {
                         val tok = doLogin(email, pass)
                         Handler(Looper.getMainLooper()).post {
                             if (tok != null) {
-                                sp.edit().putString(PREF_TOKEN, tok).apply()
+                                // Save all three together so disk always has a consistent snapshot.
+                                saveCreds(email, pass, tok)
+                                cachedEmail = email
                                 cachedToken = tok
-                                saveAuthToFile(cachedEmail, cachedPassword, tok)
                                 pref.summary = "✓ Sesión activa"
                                 Toast.makeText(screen.context, "Login exitoso", Toast.LENGTH_SHORT).show()
                             } else {
