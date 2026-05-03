@@ -110,10 +110,14 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         val estado = filters.filterIsInstance<EstadoFilter>().firstOrNull()?.toApiValue() ?: ""
         val tipo = filters.filterIsInstance<TipoFilter>().firstOrNull()?.toApiValue() ?: ""
         val erotico = filters.filterIsInstance<EroticoFilter>().firstOrNull()?.toApiValue() ?: ""
+        val demografia = filters.filterIsInstance<DemografiaFilter>().firstOrNull()?.toApiValue() ?: ""
         val order = filters.filterIsInstance<OrderFilter>().firstOrNull()?.toApiValue() ?: "alfabetico"
+        val orderDir = filters.filterIsInstance<OrderDirFilter>().firstOrNull()?.toApiValue() ?: "desc"
+        val genres = filters.filterIsInstance<GenresFilter>().firstOrNull()
+            ?.state?.filter { it.state }?.joinToString("a") { it.id.toString() } ?: ""
 
         return GET(
-            "$api/manhwa/library?buscar=${query.trim()}&estado=$estado&tipo=$tipo&erotico=$erotico&demografia=&order_item=$order&order_dir=desc&page=${page - 1}&generes=",
+            "$api/manhwa/library?buscar=${query.trim()}&estado=$estado&tipo=$tipo&erotico=$erotico&demografia=$demografia&order_item=$order&order_dir=$orderDir&page=${page - 1}&generes=$genres",
             headersBuilder().build(),
         )
     }
@@ -274,41 +278,93 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         FavoritesFilter(),
         Filter.Separator(),
         Filter.Header("Filtros de catálogo:"),
-        EstadoFilter(),
         TipoFilter(),
+        DemografiaFilter(),
+        EstadoFilter(),
         EroticoFilter(),
         OrderFilter(),
+        OrderDirFilter(),
+        GenresFilter(),
     )
 
     class FavoritesFilter : Filter.CheckBox("Favoritos", false)
 
-    class EstadoFilter : Filter.Select<String>(
-        "Estado",
-        arrayOf("Todos", "Publicando", "Finalizado", "Pausado"),
-    ) {
-        fun toApiValue() = arrayOf("", "publicandose", "finalizado", "pausado")[state]
-    }
-
     class TipoFilter : Filter.Select<String>(
         "Tipo",
-        arrayOf("Todos", "Manhwa", "Manga", "Manhua", "Novela"),
+        arrayOf("Ver todo", "Manhwa", "Manga", "Manhua", "Doujinshi", "Novela", "One shot"),
     ) {
-        fun toApiValue() = arrayOf("", "manhwa", "manga", "manhua", "novela")[state]
+        fun toApiValue() = arrayOf("", "manhwa", "manga", "manhua", "doujinshi", "novela", "one_shot")[state]
+    }
+
+    class DemografiaFilter : Filter.Select<String>(
+        "Demografía",
+        arrayOf("Ver todo", "Seinen", "Shonen", "Josei", "Shojo"),
+    ) {
+        fun toApiValue() = arrayOf("", "seinen", "shonen", "josei", "shojo")[state]
+    }
+
+    class EstadoFilter : Filter.Select<String>(
+        "Estado",
+        arrayOf("Ver todo", "Publicandose", "Pausado", "Finalizado"),
+    ) {
+        fun toApiValue() = arrayOf("", "publicandose", "pausado", "finalizado")[state]
     }
 
     class EroticoFilter : Filter.Select<String>(
-        "Contenido",
-        arrayOf("Todos", "Solo adultos", "Sin adultos"),
+        "Erotico",
+        arrayOf("Ver todo", "Si", "No"),
     ) {
         fun toApiValue() = arrayOf("", "si", "no")[state]
     }
 
     class OrderFilter : Filter.Select<String>(
         "Ordenar por",
-        arrayOf("Alfabético", "Visitas", "Reciente"),
+        arrayOf("Alfabetico", "Creacion", "Popularidad", "Num. Capitulos"),
     ) {
-        fun toApiValue() = arrayOf("alfabetico", "visitas", "reciente")[state]
+        fun toApiValue() = arrayOf("alfabetico", "creacion", "popularidad", "num_capitulos")[state]
     }
+
+    class OrderDirFilter : Filter.Select<String>(
+        "Dirección",
+        arrayOf("DESC", "ASC"),
+    ) {
+        fun toApiValue() = arrayOf("desc", "asc")[state]
+    }
+
+    class GenreFilter(name: String, val id: Int) : Filter.CheckBox(name, false)
+
+    class GenresFilter : Filter.Group<GenreFilter>(
+        "Géneros",
+        listOf(
+            GenreFilter("Acción", 3),
+            GenreFilter("Aventura", 29),
+            GenreFilter("Comedia", 18),
+            GenreFilter("Drama", 1),
+            GenreFilter("Recuentos de la vida", 42),
+            GenreFilter("Romance", 2),
+            GenreFilter("Venganza", 5),
+            GenreFilter("Harem", 6),
+            GenreFilter("Fantasía", 23),
+            GenreFilter("Sobrenatural", 31),
+            GenreFilter("Tragedia", 25),
+            GenreFilter("Psicológico", 43),
+            GenreFilter("Horror", 32),
+            GenreFilter("Thriller", 44),
+            GenreFilter("Historias cortas", 28),
+            GenreFilter("Ecchi", 30),
+            GenreFilter("Gore", 34),
+            GenreFilter("Girls love", 27),
+            GenreFilter("Boys love", 26),
+            GenreFilter("Reencarnación", 41),
+            GenreFilter("Sistema de niveles", 37),
+            GenreFilter("Ciencia ficción", 33),
+            GenreFilter("Apocalíptico", 38),
+            GenreFilter("Artes marciales", 39),
+            GenreFilter("Superpoderes", 40),
+            GenreFilter("Cultivación (cultivo)", 35),
+            GenreFilter("Milf", 8),
+        ),
+    )
 
     // ======================== Login / Preferencias ========================
 
