@@ -326,7 +326,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         if (!response.isSuccessful) return null
 
         val json = JSONObject(response.body!!.string())
-        return listOf("token", "accessToken", "jwt", "access_token")
-            .firstNotNullOfOrNull { key -> json.optString(key).takeIf { it.isNotEmpty() } }
+        val data = json.optJSONObject("data") ?: json
+        return data.optString("jwt").takeIf { it.isNotEmpty() }
     }
 }
