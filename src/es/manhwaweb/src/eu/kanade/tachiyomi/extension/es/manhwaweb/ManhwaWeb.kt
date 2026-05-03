@@ -42,6 +42,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         private const val PREF_TOKEN = "auth_token"
         private const val PREF_EMAIL = "email"
         private const val PREF_PASSWORD = "password"
+        private const val AUTH_FILE = "manhwaweb_auth"
 
         fun tryGetSharedPreferences(): android.content.SharedPreferences? = runCatching {
             val ctx = Class.forName("android.app.ActivityThread")
@@ -52,14 +53,46 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                 android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
             } else null
         }.getOrNull()
+
+        // /proc/self/cmdline gives the process name (= app package) without any reflection or context.
+        private fun authFile(): java.io.File? = runCatching {
+            val raw = java.io.File("/proc/self/cmdline").readBytes()
+                .takeWhile { it != 0.toByte() }.toByteArray().toString(Charsets.UTF_8)
+            val pkg = raw.split(":").first().trim()
+            java.io.File("/data/data/$pkg/files/$AUTH_FILE")
+        }.getOrNull()
+
+        fun saveAuthToFile(email: String, password: String, token: String) {
+            runCatching {
+                val f = authFile() ?: return@runCatching
+                f.parentFile?.mkdirs()
+                f.writeText("$email\n$password\n$token")
+            }
+        }
+
+        fun loadAuthFromFile(): Triple<String, String, String>? = runCatching {
+            val lines = authFile()?.readLines() ?: return@runCatching null
+            if (lines.size >= 3) Triple(lines[0], lines[1], lines[2]) else null
+        }.getOrNull()
     }
 
     init {
+        // Layer 1: SharedPreferences via reflection (works when reflection is allowed)
         runCatching {
             val sp = tryGetSharedPreferences() ?: return@runCatching
             if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
             if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
             if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
+        }
+        // Layer 2: file fallback via /proc/self/cmdline (no reflection, always works)
+        if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+            runCatching {
+                loadAuthFromFile()?.let { (email, pass, token) ->
+                    if (cachedEmail.isEmpty()) cachedEmail = email
+                    if (cachedPassword.isEmpty()) cachedPassword = pass
+                    if (cachedToken.isEmpty()) cachedToken = token
+                }
+            }
         }
     }
 
@@ -89,6 +122,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
             cachedToken = newToken
             runCatching { tryGetSharedPreferences()?.edit()?.putString(PREF_TOKEN, newToken)?.apply() }
+            saveAuthToFile(cachedEmail, cachedPassword, newToken)
             response.close()
             chain.proceed(request.newBuilder().header("Authorization", "Bearer $newToken").build())
         }
@@ -111,6 +145,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                     if (tok != null) {
                         cachedToken = tok
                         runCatching { tryGetSharedPreferences()?.edit()?.putString(PREF_TOKEN, tok)?.apply() }
+                        saveAuthToFile(cachedEmail, cachedPassword, tok)
                     }
                 }
             }
@@ -460,6 +495,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                             if (tok != null) {
                                 sp.edit().putString(PREF_TOKEN, tok).apply()
                                 cachedToken = tok
+                                saveAuthToFile(cachedEmail, cachedPassword, tok)
                                 pref.summary = "✓ Sesión activa"
                                 Toast.makeText(screen.context, "Login exitoso", Toast.LENGTH_SHORT).show()
                             } else {
