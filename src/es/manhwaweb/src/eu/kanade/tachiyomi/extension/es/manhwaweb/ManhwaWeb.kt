@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.extension.es.manhwaweb
 
+import android.app.Application
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
@@ -9,6 +10,8 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -33,14 +36,11 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     private val api = "https://manhwawebbackend-production.up.railway.app"
 
     init {
-        // ActivityThread is a hidden API — access via reflection to avoid compile errors.
         runCatching {
-            val ctx = Class.forName("android.app.ActivityThread")
-                .getMethod("currentApplication")
-                .invoke(null) as? android.content.Context
-            if (ctx != null && cachedToken.isEmpty()) {
+            if (cachedToken.isEmpty()) {
                 @Suppress("DEPRECATION")
-                val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
+                val sp = android.preference.PreferenceManager
+                    .getDefaultSharedPreferences(Injekt.get<Application>())
                 cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
             }
         }
@@ -80,13 +80,15 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun latestUpdatesParse(response: Response): MangasPage {
         // Response: { "manhwas": { "manhwas_esp": [...], "_manhwas": [...], "manhwas_raw": [...] } }
+        // Merge all three arrays into a single list.
         val json = JSONObject(response.body!!.string())
-        val nested = json.optJSONObject("manhwas")
-        val arr = nested?.optJSONArray("manhwas_esp")?.takeIf { it.length() > 0 }
-            ?: nested?.optJSONArray("_manhwas")?.takeIf { it.length() > 0 }
-            ?: nested?.optJSONArray("manhwas_raw")
-            ?: JSONArray()
-        return MangasPage((0 until arr.length()).map { parseMangaItem(arr.getJSONObject(it)) }, false)
+        val nested = json.optJSONObject("manhwas") ?: return MangasPage(emptyList(), false)
+        val mangas = mutableListOf<SManga>()
+        for (key in listOf("manhwas_esp", "_manhwas", "manhwas_raw")) {
+            val arr = nested.optJSONArray(key) ?: continue
+            for (i in 0 until arr.length()) mangas.add(parseMangaItem(arr.getJSONObject(i)))
+        }
+        return MangasPage(mangas, false)
     }
 
     // ======================== Search ========================
