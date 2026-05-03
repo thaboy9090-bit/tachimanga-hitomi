@@ -54,9 +54,19 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         private const val PREF_PASSWORD = "password"
     }
 
-    // headersBuilder() reads cachedToken at call time — use headersBuilder().build()
-    // on every request instead of the parent's lazy `headers` property.
     override fun headersBuilder() = super.headersBuilder().let { b ->
+        if (cachedToken.isEmpty()) {
+            runCatching {
+                val ctx = Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication")
+                    .invoke(null) as? android.content.Context
+                if (ctx != null) {
+                    @Suppress("DEPRECATION")
+                    val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
+                    cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
+                }
+            }
+        }
         val t = cachedToken
         if (t.isNotEmpty()) b.add("Authorization", "Bearer $t") else b
     }
@@ -121,7 +131,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         }
         val json = JSONObject(body)
         // Try every key that any endpoint might use for the items array
-        val arr = listOf("data", "manhwas", "siguiendo", "result", "items", "list")
+        val arr = listOf("manhwas2", "data", "manhwas", "siguiendo", "result", "items", "list")
             .firstNotNullOfOrNull { key -> json.optJSONArray(key)?.takeIf { it.length() > 0 } }
             ?: JSONArray()
         return MangasPage(
