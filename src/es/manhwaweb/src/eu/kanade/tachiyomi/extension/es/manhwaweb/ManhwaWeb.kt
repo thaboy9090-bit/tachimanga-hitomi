@@ -32,6 +32,19 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     private val api = "https://manhwawebbackend-production.up.railway.app"
 
+    init {
+        // Load persisted token at startup so requests include auth without needing
+        // the user to open the preference screen first.
+        runCatching {
+            @Suppress("DEPRECATION")
+            val app = android.app.ActivityThread.currentApplication()
+            if (app != null && cachedToken.isEmpty()) {
+                val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(app)
+                cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
+            }
+        }
+    }
+
     companion object {
         @Volatile private var cachedToken = ""
         @Volatile var lastViewedMangaId = ""
