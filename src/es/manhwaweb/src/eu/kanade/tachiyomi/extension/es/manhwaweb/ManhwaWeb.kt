@@ -37,6 +37,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         @Volatile var cachedToken = ""
         @Volatile var cachedEmail = ""
         @Volatile var cachedPassword = ""
+        @Volatile var cachedSp: android.content.SharedPreferences? = null
         @Volatile var lastViewedMangaId = ""
         @Volatile var lastViewedMangaTitle = ""
         private const val PREF_TOKEN = "auth_token"
@@ -44,22 +45,48 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         private const val PREF_PASSWORD = "password"
         private const val AUTH_FILE = "manhwaweb_auth"
 
-        fun tryGetSharedPreferences(): android.content.SharedPreferences? = runCatching {
-            val ctx = Class.forName("android.app.ActivityThread")
-                .getMethod("currentApplication")
-                .invoke(null) as? android.content.Context
-            if (ctx != null) {
-                @Suppress("DEPRECATION")
-                android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
-            } else null
+        private fun packageName(): String? = runCatching {
+            java.io.File("/proc/self/cmdline").readBytes()
+                .takeWhile { it != 0.toByte() }.toByteArray()
+                .toString(Charsets.UTF_8).split(":").first().trim()
         }.getOrNull()
 
-        // /proc/self/cmdline gives the process name (= app package) without any reflection or context.
+        fun tryGetSharedPreferences(): android.content.SharedPreferences? {
+            cachedSp?.let { return it }
+            return runCatching {
+                val ctx = Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication")
+                    .invoke(null) as? android.content.Context
+                if (ctx != null) {
+                    @Suppress("DEPRECATION")
+                    android.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
+                        .also { cachedSp = it }
+                } else null
+            }.getOrNull()
+        }
+
+        // Read credentials directly from the SharedPreferences XML file — no Context or reflection needed.
+        // Android always writes SP to /data/data/<pkg>/shared_prefs/<pkg>_preferences.xml.
+        fun readCredsFromDisk(): Triple<String, String, String>? = runCatching {
+            val pkg = packageName() ?: return@runCatching null
+            val f = java.io.File("/data/data/$pkg/shared_prefs/${pkg}_preferences.xml")
+            if (!f.exists()) return@runCatching null
+            val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+                .newDocumentBuilder().parse(f)
+            val nodes = doc.getElementsByTagName("string")
+            val map = mutableMapOf<String, String>()
+            for (i in 0 until nodes.length) {
+                val n = nodes.item(i)
+                val name = n.attributes?.getNamedItem("name")?.nodeValue ?: continue
+                map[name] = n.textContent
+            }
+            val email = map[PREF_EMAIL]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
+            val pass = map[PREF_PASSWORD]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
+            Triple(email, pass, map[PREF_TOKEN] ?: "")
+        }.getOrNull()
+
         private fun authFile(): java.io.File? = runCatching {
-            val raw = java.io.File("/proc/self/cmdline").readBytes()
-                .takeWhile { it != 0.toByte() }.toByteArray().toString(Charsets.UTF_8)
-            val pkg = raw.split(":").first().trim()
-            java.io.File("/data/data/$pkg/files/$AUTH_FILE")
+            java.io.File("/data/data/${packageName()}/files/$AUTH_FILE")
         }.getOrNull()
 
         fun saveAuthToFile(email: String, password: String, token: String) {
@@ -77,14 +104,22 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     }
 
     init {
-        // Layer 1: SharedPreferences via reflection (works when reflection is allowed)
+        // Layer 1: SharedPreferences via reflection (or cached reference)
         runCatching {
             val sp = tryGetSharedPreferences() ?: return@runCatching
             if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
             if (cachedEmail.isEmpty()) cachedEmail = sp.getString(PREF_EMAIL, "") ?: ""
             if (cachedPassword.isEmpty()) cachedPassword = sp.getString(PREF_PASSWORD, "") ?: ""
         }
-        // Layer 2: file fallback via /proc/self/cmdline (no reflection, always works)
+        // Layer 2: read SP XML file directly from disk — works even when reflection is blocked
+        if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+            readCredsFromDisk()?.let { (email, pass, token) ->
+                if (cachedEmail.isEmpty()) cachedEmail = email
+                if (cachedPassword.isEmpty()) cachedPassword = pass
+                if (cachedToken.isEmpty()) cachedToken = token
+            }
+        }
+        // Layer 3: custom auth file (backup)
         if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
             runCatching {
                 loadAuthFromFile()?.let { (email, pass, token) ->
@@ -131,7 +166,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // Before every request: if token is empty, load from every available source, then auto-login.
     override fun headersBuilder() = super.headersBuilder().let { b ->
         if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-            // Try 1: SharedPreferences via reflection
+            // Try 1: SharedPreferences via reflection (or cached reference)
             runCatching {
                 val sp = tryGetSharedPreferences()
                 if (sp != null) {
@@ -140,7 +175,15 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                     if (cachedToken.isEmpty()) cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
                 }
             }
-            // Try 2: file via /proc/self/cmdline (no reflection needed)
+            // Try 2: read SP XML file directly from disk — works even when reflection is blocked
+            if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+                readCredsFromDisk()?.let { (email, pass, token) ->
+                    if (cachedEmail.isEmpty()) cachedEmail = email
+                    if (cachedPassword.isEmpty()) cachedPassword = pass
+                    if (cachedToken.isEmpty()) cachedToken = token
+                }
+            }
+            // Try 3: custom auth file (backup)
             if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
                 runCatching {
                     loadAuthFromFile()?.let { (email, pass, token) ->
@@ -150,7 +193,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                     }
                 }
             }
-            // Try 3: auto-login if we have credentials but still no token
+            // Try 4: auto-login if we have credentials but still no token
             if (cachedToken.isEmpty() && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
                 runCatching {
                     val tok = performLogin(cachedEmail, cachedPassword)
@@ -466,6 +509,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         @Suppress("DEPRECATION")
         val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(screen.context)
+        cachedSp = sp
 
         if (cachedToken.isEmpty()) {
             cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
