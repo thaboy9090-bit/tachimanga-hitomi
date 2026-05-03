@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.extension.en.hitomi
+package eu.kanade.tachiyomi.extension.es.hitomi
 
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.Filter
@@ -21,7 +21,7 @@ class Hitomi : HttpSource() {
 
     override val name = "Hitomi.la"
     override val baseUrl = "https://hitomi.la"
-    override val lang = "en"
+    override val lang = "es"
     override val supportsLatest = true
 
     private val ltnUrl = "https://ltn.gold-usergeneratedcontent.net"
