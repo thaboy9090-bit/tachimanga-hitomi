@@ -62,30 +62,13 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Latest ========================
 
     override fun latestUpdatesRequest(page: Int): Request =
-        if (page == 1) {
-            GET("$api/manhwa/nuevos", headersBuilder().build())
-        } else {
-            GET(
-                "$api/manhwa/library?buscar=&estado=&tipo=&erotico=&demografia=&order_item=reciente&order_dir=desc&page=${page - 1}&generes=",
-                headersBuilder().build(),
-            )
-        }
+        GET("$api/latest/new-manhwa", headersBuilder().build())
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val body = response.body!!.string()
-        return if (body.trim().startsWith("[")) {
-            val arr = JSONArray(body)
-            MangasPage((0 until arr.length()).map { parseMangaItem(arr.getJSONObject(it)) }, false)
-        } else {
-            val json = JSONObject(body)
-            // /manhwa/nuevos returns { utimos_mangas_creados: [...], utimos_mangas_creados_18: [...], ... }
-            val nuevos = json.optJSONArray("utimos_mangas_creados")
-            if (nuevos != null) {
-                MangasPage((0 until nuevos.length()).map { parseMangaItem(nuevos.getJSONObject(it)) }, false)
-            } else {
-                parseLibraryBody(body)
-            }
-        }
+        val json = JSONObject(response.body!!.string())
+        // /latest/new-manhwa returns { _manhwas: [...], manhwas_esp: [...], manhwas_raw: [...] }
+        val arr = json.optJSONArray("_manhwas") ?: JSONArray()
+        return MangasPage((0 until arr.length()).map { parseMangaItem(arr.getJSONObject(it)) }, false)
     }
 
     // ======================== Search ========================
@@ -126,11 +109,16 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     }
 
     private fun parseMangaItem(obj: JSONObject): SManga {
+        // Handles both library format (_id, name_esp, _imagen) and
+        // latest/new-manhwa format (id_rel, name_manhwa, img)
         val id = obj.optString("_id").ifEmpty { obj.optString("real_id") }
+            .ifEmpty { obj.optString("id_rel") }.ifEmpty { obj.optString("id_manhwa") }
         return SManga.create().apply {
             url = "/$id"
-            title = obj.optString("name_esp").ifEmpty { obj.optString("the_real_name") }.ifEmpty { id }
-            thumbnail_url = obj.optString("_imagen").takeIf { it.isNotEmpty() }
+            title = obj.optString("name_esp").ifEmpty { obj.optString("the_real_name") }
+                .ifEmpty { obj.optString("name_manhwa") }.ifEmpty { id }
+            thumbnail_url = obj.optString("_imagen").ifEmpty { obj.optString("img") }
+                .takeIf { it.isNotEmpty() }
             status = parseStatus(obj.optString("_status"))
         }
     }

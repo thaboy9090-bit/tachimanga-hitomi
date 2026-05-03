@@ -36,17 +36,27 @@ jobs:
         run: |
           pip install Pillow -q
           python3 << 'EOF'
-          from PIL import Image
+          from PIL import Image, ImageDraw
           import os, glob
           sizes = {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}
+          colors = {
+              'hitomi':    (229, 115, 115),
+              'manhwaweb': (30,  136, 229),
+          }
           for ext_dir in glob.glob('src/*/*'):
+              ext_name = ext_dir.split('/')[-1]
+              color = colors.get(ext_name, (100, 100, 100))
               for dpi, size in sizes.items():
                   path = f"{ext_dir}/res/{dpi}"
                   os.makedirs(path, exist_ok=True)
                   icon = f"{path}/ic_launcher.png"
                   if not os.path.exists(icon):
-                      Image.new('RGB', (size, size), (229, 115, 115)).save(icon)
-                      print(f"Created {icon}")
+                      img = Image.new('RGB', (size, size), color)
+                      draw = ImageDraw.Draw(img)
+                      m = size // 8
+                      draw.rectangle([m, m, size-m, size-m], fill=tuple(max(0,c-40) for c in color))
+                      img.save(icon)
+                      print(f"Created {icon} ({ext_name})")
           EOF
 
       - name: Build APKs
