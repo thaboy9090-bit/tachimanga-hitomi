@@ -241,54 +241,48 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Login / Preferencias ========================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        // Use preferenceManager.sharedPreferences — avoids calling android.content.Context methods directly
-        val sp = screen.preferenceManager.sharedPreferences
+        // android.preference.PreferenceManager is deprecated but available in android.jar (compileSdk 34)
+        // and avoids calling getPreferenceManager() which is absent from the extensions-lib PreferenceScreen stub.
+        @Suppress("DEPRECATION")
+        val sp = android.preference.PreferenceManager.getDefaultSharedPreferences(screen.context)
 
-        // Load cached token from persistent storage on first open
         if (cachedToken.isEmpty()) {
-            cachedToken = sp?.getString(PREF_TOKEN, "") ?: ""
+            cachedToken = sp.getString(PREF_TOKEN, "") ?: ""
         }
 
         EditTextPreference(screen.context).apply {
             key = PREF_EMAIL
             title = "Email"
-            summary = sp?.getString(PREF_EMAIL, "") ?: ""
-            setOnPreferenceChangeListener { pref, value ->
-                sp?.edit()?.putString(PREF_EMAIL, value.toString())?.apply()
+            summary = sp.getString(PREF_EMAIL, "") ?: ""
+            setOnPreferenceChangeListener { pref: Preference, value: Any ->
+                sp.edit().putString(PREF_EMAIL, value.toString()).apply()
                 pref.summary = value.toString()
                 true
             }
         }.also { screen.addPreference(it) }
 
+        // Saving the password triggers login automatically.
         EditTextPreference(screen.context).apply {
             key = PREF_PASSWORD
             title = "Contraseña"
-            summary = if (sp?.getString(PREF_PASSWORD, "").isNullOrEmpty()) "No configurada" else "••••••••"
+            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa" else "Guarda la contraseña para iniciar sesión"
             setOnBindEditTextListener { et ->
                 et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
-            setOnPreferenceChangeListener { _, value ->
-                sp?.edit()?.putString(PREF_PASSWORD, value.toString())?.apply()
-                true
-            }
-        }.also { screen.addPreference(it) }
-
-        Preference(screen.context).apply {
-            title = "Iniciar sesión"
-            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa" else "Sin sesión — ingresa email y contraseña primero"
-            setOnPreferenceClickListener { pref ->
-                val email = sp?.getString(PREF_EMAIL, "") ?: ""
-                val pass = sp?.getString(PREF_PASSWORD, "") ?: ""
-                if (email.isEmpty() || pass.isEmpty()) {
-                    Toast.makeText(screen.context, "Ingresa email y contraseña primero", Toast.LENGTH_SHORT).show()
-                    return@setOnPreferenceClickListener true
+            setOnPreferenceChangeListener { pref: Preference, value: Any ->
+                val email = sp.getString(PREF_EMAIL, "") ?: ""
+                val pass = value.toString()
+                sp.edit().putString(PREF_PASSWORD, pass).apply()
+                if (email.isEmpty()) {
+                    Toast.makeText(screen.context, "Ingresa tu email primero", Toast.LENGTH_SHORT).show()
+                    return@setOnPreferenceChangeListener true
                 }
                 Thread {
                     runCatching {
                         val tok = doLogin(email, pass)
                         Handler(Looper.getMainLooper()).post {
                             if (tok != null) {
-                                sp?.edit()?.putString(PREF_TOKEN, tok)?.apply()
+                                sp.edit().putString(PREF_TOKEN, tok).apply()
                                 cachedToken = tok
                                 pref.summary = "✓ Sesión activa"
                                 Toast.makeText(screen.context, "Login exitoso", Toast.LENGTH_SHORT).show()
