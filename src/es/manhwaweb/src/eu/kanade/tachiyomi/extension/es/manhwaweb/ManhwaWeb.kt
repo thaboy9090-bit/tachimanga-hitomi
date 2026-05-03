@@ -39,8 +39,6 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         @Volatile var cachedPassword = ""
         @Volatile var lastViewedMangaId = ""
         @Volatile var lastViewedMangaTitle = ""
-        // Resets to 0 on every app restart; forces a fresh login on the first favorites load.
-        @Volatile var lastLoginTime = 0L
         private const val PREF_TOKEN = "auth_token"
         private const val PREF_EMAIL = "email"
         private const val PREF_PASSWORD = "password"
@@ -185,15 +183,13 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         if (filters.filterIsInstance<FavoritesFilter>().firstOrNull()?.state == true) {
-            // Force a fresh login on the first favorites request of each session.
-            // The endpoint returns 200 with empty data for expired tokens (not 401),
-            // so the 401 interceptor never fires — we must proactively refresh here.
-            if (lastLoginTime == 0L && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
+            // Always re-login before fetching favorites: the endpoint returns 200 with
+            // empty data for expired tokens (not 401), so we must proactively refresh.
+            if (cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
                 runCatching {
                     val tok = performLogin(cachedEmail, cachedPassword)
                     if (tok != null) {
                         cachedToken = tok
-                        lastLoginTime = System.currentTimeMillis()
                         saveToken(tok)
                     }
                 }
