@@ -78,18 +78,12 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         GET("$api/latest/new-manhwa", headersBuilder().build())
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val body = response.body!!.string()
-        // Handle direct array response
-        if (body.trim().startsWith("[")) {
-            val arr = JSONArray(body)
-            return MangasPage((0 until arr.length()).map { parseMangaItem(arr.getJSONObject(it)) }, false)
-        }
-        val json = JSONObject(body)
-        // Try keys in order of preference
-        val arr = json.optJSONArray("_manhwas")?.takeIf { it.length() > 0 }
-            ?: json.optJSONArray("manhwas_esp")?.takeIf { it.length() > 0 }
-            ?: json.optJSONArray("manhwas_raw")?.takeIf { it.length() > 0 }
-            ?: json.optJSONArray("data")
+        // Response: { "manhwas": { "manhwas_esp": [...], "_manhwas": [...], "manhwas_raw": [...] } }
+        val json = JSONObject(response.body!!.string())
+        val nested = json.optJSONObject("manhwas")
+        val arr = nested?.optJSONArray("manhwas_esp")?.takeIf { it.length() > 0 }
+            ?: nested?.optJSONArray("_manhwas")?.takeIf { it.length() > 0 }
+            ?: nested?.optJSONArray("manhwas_raw")
             ?: JSONArray()
         return MangasPage((0 until arr.length()).map { parseMangaItem(arr.getJSONObject(it)) }, false)
     }
