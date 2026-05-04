@@ -311,38 +311,48 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Pages ========================
 
     override fun pageListRequest(chapter: SChapter): Request {
-        // Fire read-sync in background when user opens a chapter.
-        if (cachedToken.isNotEmpty()) {
-            val raw = chapter.url.removePrefix("/")
-            val lastDash = raw.lastIndexOf('-')
-            if (lastDash > 0) {
-                val mangaId = raw.substring(0, lastDash)
-                val chapterNum = raw.substring(lastDash + 1).toDoubleOrNull()
-                if (chapterNum != null) {
-                    val chapterVal: Number = if (chapterNum == chapterNum.toLong().toDouble())
-                        chapterNum.toLong() else chapterNum
-                    Thread {
-                        runCatching {
-                            val body = JSONObject()
-                                .put("manhwa", mangaId)
-                                .put("chapter", chapterVal)
-                                .put("order", "b")
-                                .toString()
-                                .toRequestBody("application/json".toMediaType())
-                            client.newCall(
-                                Request.Builder()
-                                    .url("$api/follow/leidosmanhwas")
-                                    .headers(headersBuilder().build())
-                                    .post(body)
-                                    .build(),
-                            ).execute().close()
-                        }
-                    }.start()
-                }
+        // Ensure we have a valid token before the read-sync fires.
+        if (cachedToken.isEmpty() && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
+            runCatching {
+                val tok = performLogin(cachedEmail, cachedPassword)
+                if (tok != null) { cachedToken = tok; saveToken(tok) }
+            }
+        }
+        // Fire read-sync in background so the chapter is marked as read on the web.
+        val raw = chapter.url.removePrefix("/")
+        val lastDash = raw.lastIndexOf('-')
+        if (cachedToken.isNotEmpty() && lastDash > 0) {
+            val mangaId = raw.substring(0, lastDash)
+            val chapterNum = raw.substring(lastDash + 1).toDoubleOrNull()
+            if (chapterNum != null) {
+                val chapterVal: Number = if (chapterNum == chapterNum.toLong().toDouble())
+                    chapterNum.toLong() else chapterNum
+                Thread {
+                    runCatching {
+                        val body = JSONObject()
+                            .put("manhwa", mangaId)
+                            .put("chapter", chapterVal)
+                            .put("order", "b")
+                            .toString()
+                            .toRequestBody("application/json".toMediaType())
+                        client.newCall(
+                            Request.Builder()
+                                .url("$api/follow/leidosmanhwas")
+                                .headers(headersBuilder().build())
+                                .post(body)
+                                .build(),
+                        ).execute().close()
+                    }
+                }.start()
             }
         }
         return GET("$api/chapters/see/${chapter.url.removePrefix("/")}", headersBuilder().build())
     }
+
+    // Images are served from a CDN and don't need the auth token.
+    // Sending Authorization prevents CDN caching and slows down loading.
+    override fun imageRequest(page: Page): Request =
+        GET(page.imageUrl!!, super.headersBuilder().build())
 
     override fun pageListParse(response: Response): List<Page> {
         val obj = JSONObject(response.body!!.string())
