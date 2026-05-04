@@ -101,8 +101,14 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         }
     }
 
-    // Retry-on-401 interceptor: re-logins and retries once when a token is expired.
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor { chain ->
+            try {
+                chain.proceed(chain.request())
+            } catch (e: java.net.SocketTimeoutException) {
+                chain.proceed(chain.request())
+            }
+        }
         .addInterceptor { chain ->
             val request = chain.request()
             val response = chain.proceed(request)
