@@ -349,10 +349,8 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         return GET("$api/chapters/see/${chapter.url.removePrefix("/")}", headersBuilder().build())
     }
 
-    // Images are served from a CDN and don't need the auth token.
-    // Sending Authorization prevents CDN caching and slows down loading.
     override fun imageRequest(page: Page): Request =
-        GET(page.imageUrl!!, super.headersBuilder().build())
+        GET(page.imageUrl!!, super.headersBuilder().add("Referer", baseUrl).build())
 
     override fun pageListParse(response: Response): List<Page> {
         val obj = JSONObject(response.body!!.string())
