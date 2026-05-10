@@ -477,7 +477,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             }
         }
 
-        androidx.preference.Preference(screen.context).apply {
+        EditTextPreference(screen.context).apply {
             title = "Iniciar Sesión"
             summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa — toca para renovar"
                       else "Toca para iniciar sesión en ManhwaWeb"
