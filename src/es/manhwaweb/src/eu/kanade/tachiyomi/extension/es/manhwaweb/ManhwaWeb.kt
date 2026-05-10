@@ -455,7 +455,9 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             }
         }
 
-        EditTextPreference(screen.context).apply {
+        object : EditTextPreference(screen.context) {
+            override fun onClick() { /* suppress text dialog — WebView opens via click listener */ }
+        }.apply {
             title = "Iniciar Sesión"
             summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa — toca para renovar"
                       else "Toca para iniciar sesión en ManhwaWeb"
