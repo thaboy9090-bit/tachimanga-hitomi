@@ -455,14 +455,18 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             }
         }
 
-        object : EditTextPreference(screen.context) {
-            override fun performClick() {
-                showWebViewLogin(context) { summary = "✓ Sesión activa" }
-            }
-        }.apply {
+        EditTextPreference(screen.context).apply {
             title = "Sincronizar sesión"
             summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa — toca para renovar"
                       else "Haz login en el WebView del app, luego toca aquí"
+            setOnBindEditTextListener { et ->
+                et.hint = "Toca OK para sincronizar"
+                et.isEnabled = false
+            }
+            setOnPreferenceChangeListener { pref, _ ->
+                showWebViewLogin(screen.context) { pref.summary = "✓ Sesión activa" }
+                false
+            }
         }.also { screen.addPreference(it) }
 
         // Follow toggle: pre-filled with last viewed manga ID, saving calls the toggle endpoint.
