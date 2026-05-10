@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.extension.es.manhwaweb
 
 import android.os.Handler
 import android.os.Looper
-import android.text.InputType
 import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
@@ -39,62 +38,51 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         @Volatile var cachedPassword = ""
         @Volatile var lastViewedMangaId = ""
         @Volatile var lastViewedMangaTitle = ""
-        private const val PREF_TOKEN = "auth_token"
-        private const val PREF_EMAIL = "email"
-        private const val PREF_PASSWORD = "password"
-        private const val SP_NAME = "manhwaweb"
 
-        private fun appPkg(): String? = runCatching {
-            java.io.File("/proc/self/cmdline").readBytes()
-                .takeWhile { it != 0.toByte() }.toByteArray()
-                .toString(Charsets.UTF_8).split(":").first().trim()
+        private const val COOKIE_JWT = "mw_jwt"
+        private const val COOKIE_EMAIL = "mw_email"
+        private const val COOKIE_PASS = "mw_pass"
+        private const val MAX_AGE = "max-age=31536000; path=/"
+
+        private fun cookieMap(domain: String): Map<String, String> = runCatching {
+            android.webkit.CookieManager.getInstance().getCookie(domain)
+                ?.split(";")
+                ?.associate { part ->
+                    val idx = part.indexOf('=')
+                    if (idx < 0) part.trim() to ""
+                    else part.substring(0, idx).trim() to part.substring(idx + 1).trim()
+                } ?: emptyMap()
+        }.getOrDefault(emptyMap())
+
+        fun readCreds(domain: String): Triple<String, String, String>? = runCatching {
+            val map = cookieMap(domain)
+            val token = map[COOKIE_JWT]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
+            Triple(map[COOKIE_EMAIL] ?: "", map[COOKIE_PASS] ?: "", token)
         }.getOrNull()
 
-        fun readCreds(): Triple<String, String, String>? = runCatching {
-            val pkg = appPkg() ?: return@runCatching null
-            val f = java.io.File("/data/data/$pkg/shared_prefs/$SP_NAME.xml")
-                .takeIf { it.exists() } ?: return@runCatching null
-            val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance()
-                .newDocumentBuilder().parse(f)
-            val nodes = doc.getElementsByTagName("string")
-            val map = mutableMapOf<String, String>()
-            for (i in 0 until nodes.length) {
-                val n = nodes.item(i)
-                val name = n.attributes?.getNamedItem("name")?.nodeValue ?: continue
-                map[name] = n.textContent
-            }
-            // Only the token is required; email/password may be absent (e.g. WebView login).
-            val token = map[PREF_TOKEN]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
-            Triple(map[PREF_EMAIL] ?: "", map[PREF_PASSWORD] ?: "", token)
-        }.getOrNull()
-
-        private fun String.esc() =
-            replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-        fun saveCreds(email: String, password: String, token: String) {
+        fun saveCreds(domain: String, email: String, password: String, token: String) {
             runCatching {
-                val pkg = appPkg() ?: return@runCatching
-                val dir = java.io.File("/data/data/$pkg/shared_prefs").also { it.mkdirs() }
-                // Write directly — tmp+renameTo can silently fail on some Android configs.
-                java.io.File(dir, "$SP_NAME.xml").writeText(
-                    "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" +
-                        "    <string name=\"$PREF_EMAIL\">${email.esc()}</string>\n" +
-                        "    <string name=\"$PREF_PASSWORD\">${password.esc()}</string>\n" +
-                        "    <string name=\"$PREF_TOKEN\">${token.esc()}</string>\n" +
-                        "</map>",
-                    Charsets.UTF_8,
-                )
+                val cm = android.webkit.CookieManager.getInstance()
+                cm.setAcceptCookie(true)
+                if (token.isNotEmpty()) cm.setCookie(domain, "$COOKIE_JWT=$token; $MAX_AGE")
+                if (email.isNotEmpty()) cm.setCookie(domain, "$COOKIE_EMAIL=$email; $MAX_AGE")
+                if (password.isNotEmpty()) cm.setCookie(domain, "$COOKIE_PASS=$password; $MAX_AGE")
+                cm.flush()
             }
         }
 
-        fun saveToken(token: String) {
-            val c = readCreds()
-            saveCreds(c?.first ?: cachedEmail, c?.second ?: cachedPassword, token)
+        fun saveToken(domain: String, token: String) {
+            runCatching {
+                val cm = android.webkit.CookieManager.getInstance()
+                cm.setAcceptCookie(true)
+                cm.setCookie(domain, "$COOKIE_JWT=$token; $MAX_AGE")
+                cm.flush()
+            }
         }
     }
 
     init {
-        readCreds()?.let { (email, pass, token) ->
+        readCreds(baseUrl)?.let { (email, pass, token) ->
             if (cachedEmail.isEmpty()) cachedEmail = email
             if (cachedPassword.isEmpty()) cachedPassword = pass
             if (cachedToken.isEmpty()) cachedToken = token
@@ -115,20 +103,13 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             if (response.code != 401 || request.url.encodedPath.endsWith("/user/login")) {
                 return@addInterceptor response
             }
-            // If credentials not in memory, reload before giving up
-            if (cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
-                readCreds()?.let { (email, pass, _) ->
-                    if (cachedEmail.isEmpty()) cachedEmail = email
-                    if (cachedPassword.isEmpty()) cachedPassword = pass
-                }
-            }
             if (cachedEmail.isEmpty() || cachedPassword.isEmpty()) return@addInterceptor response
 
             val newToken = runCatching { performLogin(cachedEmail, cachedPassword) }.getOrNull()
                 ?: return@addInterceptor response
 
             cachedToken = newToken
-            saveToken(newToken)
+            saveToken(baseUrl, newToken)
             response.close()
             chain.proceed(request.newBuilder().header("Authorization", "Bearer $newToken").build())
         }
@@ -136,16 +117,15 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun headersBuilder() = super.headersBuilder().let { b ->
         if (cachedToken.isEmpty()) {
-            readCreds()?.let { (email, pass, token) ->
+            readCreds(baseUrl)?.let { (email, pass, token) ->
                 if (cachedEmail.isEmpty()) cachedEmail = email
                 if (cachedPassword.isEmpty()) cachedPassword = pass
                 cachedToken = token
             }
-            // Auto-login only when we have stored credentials (manual login path).
             if (cachedToken.isEmpty() && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
                 runCatching {
                     val tok = performLogin(cachedEmail, cachedPassword)
-                    if (tok != null) { cachedToken = tok; saveToken(tok) }
+                    if (tok != null) { cachedToken = tok; saveToken(baseUrl, tok) }
                 }
             }
         }
@@ -191,10 +171,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             if (cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
                 runCatching {
                     val tok = performLogin(cachedEmail, cachedPassword)
-                    if (tok != null) {
-                        cachedToken = tok
-                        saveToken(tok)
-                    }
+                    if (tok != null) { cachedToken = tok; saveToken(baseUrl, tok) }
                 }
             }
             return GET("$api/follow/manhwa/siguiendo?page=${page - 1}", headersBuilder().build())
@@ -318,7 +295,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         if (cachedToken.isEmpty() && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
             runCatching {
                 val tok = performLogin(cachedEmail, cachedPassword)
-                if (tok != null) { cachedToken = tok; saveToken(tok) }
+                if (tok != null) { cachedToken = tok; saveToken(baseUrl, tok) }
             }
         }
         // Fire read-sync in background so the chapter is marked as read on the web.
@@ -471,62 +448,19 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         if (cachedToken.isEmpty()) {
-            readCreds()?.let { (email, pass, token) ->
+            readCreds(baseUrl)?.let { (email, pass, token) ->
                 if (cachedEmail.isEmpty()) cachedEmail = email
                 if (cachedPassword.isEmpty()) cachedPassword = pass
                 cachedToken = token
             }
         }
 
-        val emailPref = EditTextPreference(screen.context).apply {
-            key = PREF_EMAIL
-            title = "Email"
-            summary = cachedEmail.ifEmpty { "Ingresa tu email" }
-            if (cachedEmail.isNotEmpty()) text = cachedEmail
-            setOnPreferenceChangeListener { pref: Preference, value: Any ->
-                val email = value.toString().trim()
-                if (email.isEmpty()) return@setOnPreferenceChangeListener false
-                cachedEmail = email
-                pref.summary = email
-                true
-            }
-        }.also { screen.addPreference(it) }
-
         EditTextPreference(screen.context).apply {
-            key = PREF_PASSWORD
-            title = "Contraseña"
-            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa" else "Ingresa tu contraseña para iniciar sesión"
-            setOnBindEditTextListener { et ->
-                et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            }
-            setOnPreferenceChangeListener { pref: Preference, value: Any ->
-                val email = cachedEmail.ifEmpty { emailPref.text ?: "" }.trim()
-                val pass = value.toString()
-                if (email.isEmpty()) {
-                    Toast.makeText(screen.context, "Ingresa tu email primero", Toast.LENGTH_SHORT).show()
-                    return@setOnPreferenceChangeListener true
-                }
-                if (cachedEmail != email) cachedEmail = email
-                cachedPassword = pass
-                Thread {
-                    runCatching {
-                        val tok = performLogin(email, pass)
-                        Handler(Looper.getMainLooper()).post {
-                            if (tok != null) {
-                                cachedToken = tok
-                                saveCreds(email, pass, tok)
-                                pref.summary = "✓ Sesión activa"
-                                Toast.makeText(screen.context, "Login exitoso", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(screen.context, "Login fallido — revisa tus datos", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    }.onFailure { e ->
-                        Handler(Looper.getMainLooper()).post {
-                            Toast.makeText(screen.context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                }.start()
+            title = "Iniciar Sesión"
+            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa — toca para renovar"
+                      else "Toca para iniciar sesión en ManhwaWeb"
+            setOnPreferenceClickListener { pref ->
+                showWebViewLogin(screen.context) { pref.summary = "✓ Sesión activa" }
                 true
             }
         }.also { screen.addPreference(it) }
@@ -582,6 +516,37 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             screen.addPreference(pref)
             if (lastViewedMangaId.isNotEmpty()) pref.setText(lastViewedMangaId)
         }
+    }
+
+    private fun showWebViewLogin(context: android.content.Context, onSuccess: () -> Unit) {
+        val webView = android.webkit.WebView(context).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+        }
+        val dialog = android.app.AlertDialog.Builder(context)
+            .setTitle("ManhwaWeb — Iniciar Sesión")
+            .setView(webView)
+            .setNegativeButton("Cerrar", null)
+            .create()
+
+        webView.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView, url: String) {
+                view.evaluateJavascript("localStorage.getItem('tokenCommers')") { result ->
+                    val token = result?.trim('"')?.takeIf { it != "null" && it.length > 20 }
+                        ?: return@evaluateJavascript
+                    Handler(Looper.getMainLooper()).post {
+                        cachedToken = token
+                        saveToken(baseUrl, token)
+                        onSuccess()
+                        Toast.makeText(context, "✓ Login exitoso", Toast.LENGTH_SHORT).show()
+                        dialog.dismiss()
+                    }
+                }
+            }
+        }
+
+        webView.loadUrl(baseUrl)
+        dialog.show()
     }
 
     // Uses network.client directly (no interceptors) so login can never trigger itself recursively.
