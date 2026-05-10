@@ -456,15 +456,13 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         }
 
         object : EditTextPreference(screen.context) {
-            override fun onClick() { /* suppress text dialog — WebView opens via click listener */ }
-        }.apply {
-            title = "Iniciar Sesión"
-            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa — toca para renovar"
-                      else "Toca para iniciar sesión en ManhwaWeb"
-            setOnPreferenceClickListener { pref ->
-                showWebViewLogin(screen.context) { pref.summary = "✓ Sesión activa" }
-                true
+            override fun performClick() {
+                showWebViewLogin(context) { summary = "✓ Sesión activa" }
             }
+        }.apply {
+            title = "Sincronizar sesión"
+            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa — toca para renovar"
+                      else "Haz login en el WebView del app, luego toca aquí"
         }.also { screen.addPreference(it) }
 
         // Follow toggle: pre-filled with last viewed manga ID, saving calls the toggle endpoint.
