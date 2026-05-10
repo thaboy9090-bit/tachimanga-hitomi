@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.extension.es.manhwaweb
 
 import android.os.Handler
 import android.os.Looper
-import android.text.InputType
 import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
@@ -63,9 +62,9 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
                 val name = n.attributes?.getNamedItem("name")?.nodeValue ?: continue
                 map[name] = n.textContent
             }
-            val email = map[PREF_EMAIL]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
-            val pass = map[PREF_PASSWORD]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
-            Triple(email, pass, map[PREF_TOKEN] ?: "")
+            // Only the token is required; email/password may be absent (e.g. WebView login).
+            val token = map[PREF_TOKEN]?.takeIf { it.isNotEmpty() } ?: return@runCatching null
+            Triple(map[PREF_EMAIL] ?: "", map[PREF_PASSWORD] ?: "", token)
         }.getOrNull()
 
         private fun String.esc() =
@@ -135,20 +134,17 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         .build()
 
     override fun headersBuilder() = super.headersBuilder().let { b ->
-        if (cachedToken.isEmpty() || cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+        if (cachedToken.isEmpty()) {
             readCreds()?.let { (email, pass, token) ->
                 if (cachedEmail.isEmpty()) cachedEmail = email
                 if (cachedPassword.isEmpty()) cachedPassword = pass
-                if (cachedToken.isEmpty()) cachedToken = token
+                cachedToken = token
             }
-            // Auto-login if we have email+password but still no token
+            // Auto-login only when we have stored credentials (manual login path).
             if (cachedToken.isEmpty() && cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
                 runCatching {
                     val tok = performLogin(cachedEmail, cachedPassword)
-                    if (tok != null) {
-                        cachedToken = tok
-                        saveToken(tok)
-                    }
+                    if (tok != null) { cachedToken = tok; saveToken(tok) }
                 }
             }
         }
@@ -473,66 +469,20 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     // ======================== Login / Preferencias ========================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        // Refresh cached creds in case they were saved in a previous session.
-        if (cachedEmail.isEmpty() || cachedPassword.isEmpty()) {
+        if (cachedToken.isEmpty()) {
             readCreds()?.let { (email, pass, token) ->
                 if (cachedEmail.isEmpty()) cachedEmail = email
                 if (cachedPassword.isEmpty()) cachedPassword = pass
-                if (cachedToken.isEmpty()) cachedToken = token
+                cachedToken = token
             }
         }
 
-        val emailPref = EditTextPreference(screen.context).apply {
-            key = PREF_EMAIL
-            title = "Email"
-            summary = cachedEmail
-            if (cachedEmail.isNotEmpty()) text = cachedEmail
-            setOnPreferenceChangeListener { pref: Preference, value: Any ->
-                val email = value.toString().trim()
-                if (email.isEmpty()) return@setOnPreferenceChangeListener false
-                cachedEmail = email
-                pref.summary = email
-                true
-            }
-        }.also { screen.addPreference(it) }
-
-        EditTextPreference(screen.context).apply {
-            key = PREF_PASSWORD
-            title = "Contraseña"
-            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa" else "Guarda la contraseña para iniciar sesión"
-            setOnBindEditTextListener { et ->
-                et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            }
-            setOnPreferenceChangeListener { pref: Preference, value: Any ->
-                val email = cachedEmail.ifEmpty { emailPref.text ?: "" }.trim()
-                val pass = value.toString()
-                if (email.isEmpty()) {
-                    Toast.makeText(screen.context, "Ingresa tu email primero", Toast.LENGTH_SHORT).show()
-                    return@setOnPreferenceChangeListener true
-                }
-                if (cachedEmail != email) cachedEmail = email
-                cachedPassword = pass
-                Thread {
-                    runCatching {
-                        val tok = doLogin(email, pass)
-                        Handler(Looper.getMainLooper()).post {
-                            if (tok != null) {
-                                // Save all three together so disk always has a consistent snapshot.
-                                saveCreds(email, pass, tok)
-                                cachedEmail = email
-                                cachedToken = tok
-                                pref.summary = "✓ Sesión activa"
-                                Toast.makeText(screen.context, "Login exitoso", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(screen.context, "Login fallido — revisa tus datos", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    }.onFailure { e ->
-                        Handler(Looper.getMainLooper()).post {
-                            Toast.makeText(screen.context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                }.start()
+        androidx.preference.Preference(screen.context).apply {
+            title = "Iniciar Sesión"
+            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa — toca para renovar"
+                      else "Toca para iniciar sesión en ManhwaWeb"
+            setOnPreferenceClickListener { pref ->
+                showWebViewLogin(screen.context) { pref.summary = "✓ Sesión activa" }
                 true
             }
         }.also { screen.addPreference(it) }
@@ -590,6 +540,67 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         }
     }
 
+    private fun showWebViewLogin(context: android.content.Context, onSuccess: () -> Unit) {
+        val webView = android.webkit.WebView(context).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+        }
+
+        val dialog = android.app.AlertDialog.Builder(context)
+            .setTitle("ManhwaWeb — Iniciar Sesión")
+            .setView(webView)
+            .setNegativeButton("Cerrar", null)
+            .create()
+
+        webView.addJavascriptInterface(
+            object {
+                @android.webkit.JavascriptInterface
+                fun onToken(token: String) {
+                    if (token.isEmpty()) return
+                    Handler(Looper.getMainLooper()).post {
+                        cachedToken = token
+                        // Try to extract email from JWT payload.
+                        val email = runCatching {
+                            val payload = token.split(".").getOrNull(1) ?: return@runCatching ""
+                            val padded = payload.padEnd((payload.length + 3) / 4 * 4, '=')
+                            val decoded = String(android.util.Base64.decode(padded, android.util.Base64.URL_SAFE))
+                            JSONObject(decoded).let { it.optString("email").ifEmpty { it.optString("sub") } }
+                        }.getOrDefault("")
+                        if (email.isNotEmpty()) cachedEmail = email
+                        saveCreds(cachedEmail, cachedPassword, token)
+                        onSuccess()
+                        Toast.makeText(context, "✓ Login exitoso", Toast.LENGTH_SHORT).show()
+                        dialog.dismiss()
+                    }
+                }
+            },
+            "TachiManga",
+        )
+
+        webView.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView, url: String) {
+                // Try known keys first, then scan all localStorage for anything JWT-shaped.
+                view.evaluateJavascript(
+                    """(function(){
+                        var keys=['jwt','token','auth_token','accessToken','access_token','authToken','id_token'];
+                        for(var i=0;i<keys.length;i++){
+                            var t=localStorage.getItem(keys[i]);
+                            if(t&&t.length>20){TachiManga.onToken(t);return;}
+                        }
+                        for(var j=0;j<localStorage.length;j++){
+                            var v=localStorage.getItem(localStorage.key(j));
+                            if(v&&v.split('.').length===3&&v.length>40){TachiManga.onToken(v);return;}
+                        }
+                    })();""",
+                    null,
+                )
+            }
+        }
+
+        webView.loadUrl(baseUrl)
+        dialog.show()
+    }
+
     // Uses network.client directly (no interceptors) so login can never trigger itself recursively.
     private fun performLogin(email: String, password: String): String? {
         val body = JSONObject()
@@ -606,5 +617,4 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         return (json.optJSONObject("data") ?: json).optString("jwt").takeIf { it.isNotEmpty() }
     }
 
-    private fun doLogin(email: String, password: String): String? = performLogin(email, password)
 }
