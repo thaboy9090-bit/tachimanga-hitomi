@@ -455,17 +455,56 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             }
         }
 
-        EditTextPreference(screen.context).apply {
-            title = "Sincronizar sesión"
-            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa — toca para renovar"
-                      else "Haz login en el WebView del app, luego toca aquí"
-            setOnBindEditTextListener { et ->
-                et.hint = "Toca OK para sincronizar"
-                et.isEnabled = false
+        val emailPref = EditTextPreference(screen.context).apply {
+            key = "email"
+            title = "Email"
+            summary = cachedEmail.ifEmpty { "Ingresa tu email" }
+            if (cachedEmail.isNotEmpty()) text = cachedEmail
+            setOnPreferenceChangeListener { pref: Preference, value: Any ->
+                val email = value.toString().trim()
+                if (email.isEmpty()) return@setOnPreferenceChangeListener false
+                cachedEmail = email
+                pref.summary = email
+                true
             }
-            setOnPreferenceChangeListener { pref, _ ->
-                showWebViewLogin(screen.context) { pref.summary = "✓ Sesión activa" }
-                false
+        }.also { screen.addPreference(it) }
+
+        EditTextPreference(screen.context).apply {
+            key = "password"
+            title = "Contraseña"
+            summary = if (cachedToken.isNotEmpty()) "✓ Sesión activa" else "Ingresa tu contraseña para iniciar sesión"
+            setOnBindEditTextListener { et ->
+                et.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            setOnPreferenceChangeListener { pref: Preference, value: Any ->
+                val email = cachedEmail.ifEmpty { emailPref.text ?: "" }.trim()
+                val pass = value.toString()
+                if (email.isEmpty()) {
+                    Toast.makeText(screen.context, "Ingresa tu email primero", Toast.LENGTH_SHORT).show()
+                    return@setOnPreferenceChangeListener true
+                }
+                if (cachedEmail != email) cachedEmail = email
+                cachedPassword = pass
+                Thread {
+                    runCatching {
+                        val tok = performLogin(email, pass)
+                        Handler(Looper.getMainLooper()).post {
+                            if (tok != null) {
+                                cachedToken = tok
+                                saveCreds(baseUrl, email, pass, tok)
+                                pref.summary = "✓ Sesión activa"
+                                Toast.makeText(screen.context, "Login exitoso", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(screen.context, "Login fallido — revisa tus datos", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }.onFailure { e ->
+                        Handler(Looper.getMainLooper()).post {
+                            Toast.makeText(screen.context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }.start()
+                true
             }
         }.also { screen.addPreference(it) }
 
@@ -520,37 +559,6 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             screen.addPreference(pref)
             if (lastViewedMangaId.isNotEmpty()) pref.setText(lastViewedMangaId)
         }
-    }
-
-    private fun showWebViewLogin(context: android.content.Context, onSuccess: () -> Unit) {
-        val webView = android.webkit.WebView(context).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-        }
-        val dialog = android.app.AlertDialog.Builder(context)
-            .setTitle("ManhwaWeb — Iniciar Sesión")
-            .setView(webView)
-            .setNegativeButton("Cerrar", null)
-            .create()
-
-        webView.webViewClient = object : android.webkit.WebViewClient() {
-            override fun onPageFinished(view: android.webkit.WebView, url: String) {
-                view.evaluateJavascript("localStorage.getItem('tokenCommers')") { result ->
-                    val token = result?.trim('"')?.takeIf { it != "null" && it.length > 20 }
-                        ?: return@evaluateJavascript
-                    Handler(Looper.getMainLooper()).post {
-                        cachedToken = token
-                        saveToken(baseUrl, token)
-                        onSuccess()
-                        Toast.makeText(context, "✓ Login exitoso", Toast.LENGTH_SHORT).show()
-                        dialog.dismiss()
-                    }
-                }
-            }
-        }
-
-        webView.loadUrl(baseUrl)
-        dialog.show()
     }
 
     // Uses network.client directly (no interceptors) so login can never trigger itself recursively.
