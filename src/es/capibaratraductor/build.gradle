@@ -1,7 +1,7 @@
 ext {
     extName = 'CapibaraTraductor'
     extClass = '.CapibaraTraductor'
-    extVersionCode = 8
+    extVersionCode = 9
     pkgNameSuffix = 'es.capibaratraductor'
     nsfw = 0
 }

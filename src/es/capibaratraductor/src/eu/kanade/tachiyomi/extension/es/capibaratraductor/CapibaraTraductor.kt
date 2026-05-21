@@ -202,7 +202,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         val q = query.trim()
 
         val url = buildString {
-            append("$api/api/manga-custom?order=latest&limit=500&nsfw=false&page=$page")
+            append("$api/api/manga-custom?page=$page&limit=24&order=latest&nsfw=false")
             if (q.isNotEmpty()) append("&search=${q.encodeUrl()}")
             if (selectedStatus.isNotEmpty()) append("&status=$selectedStatus")
             if (selectedGenre.isNotEmpty()) append("&genre=$selectedGenre")
@@ -252,7 +252,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             .mapNotNull { parseMangaCustomItem(items.getJSONObject(it)) }
             .filter { filterOrg.isEmpty() || it.url.startsWith("/$filterOrg/") }
         val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
-        val maxPage = data.optInt("maxPage", 1)
+        val maxPage = data.optInt("maxPage", data.optInt("total", 0) / 24 + 1)
         return MangasPage(mangas, maxPage > currentPage)
     }
 
