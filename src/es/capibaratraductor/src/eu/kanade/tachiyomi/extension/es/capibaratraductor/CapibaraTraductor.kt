@@ -357,18 +357,19 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             Page(p.optInt("number", i + 1) - 1, "", p.optString("imageUrl"))
         }.sortedBy { it.index }
 
-        // Mark chapter as read on server (requires login)
-        if (cachedToken.isNotEmpty()) {
+        // Mark chapter as finished on server — POST to last page URL (requires login)
+        if (cachedToken.isNotEmpty() && pages.isNotEmpty()) {
             val seg = response.request.url.pathSegments
             // path: api / manga-custom / {slug} / chapter / {num} / pages
             val mangaSlug = seg.getOrElse(2) { "" }
             val chapterNum = seg.getOrElse(4) { "" }
+            val lastPage = pages.size  // 1-indexed last page number
             if (mangaSlug.isNotEmpty() && chapterNum.isNotEmpty()) {
                 Thread {
                     runCatching {
                         network.client.newCall(
                             Request.Builder()
-                                .url("$api/api/user-chapter-history/manga-custom/$mangaSlug/chapter/$chapterNum")
+                                .url("$api/api/user-chapter-history/manga-custom/$mangaSlug/chapter/$chapterNum/pages/$lastPage")
                                 .post("{}".toRequestBody("application/json".toMediaType()))
                                 .header("Authorization", "Bearer $cachedToken")
                                 .build(),
