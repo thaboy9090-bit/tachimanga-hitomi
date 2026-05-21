@@ -38,6 +38,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         @Volatile var cachedEmail = ""
         @Volatile var cachedPassword = ""
         @Volatile var scanGroups: List<Pair<String, String>> = emptyList()
+        @Volatile var genres: List<Pair<String, String>> = emptyList()
 
         private const val COOKIE_JWT = "ct_jwt"
         private const val COOKIE_EMAIL = "ct_email"
@@ -87,9 +88,8 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             if (cachedPassword.isEmpty()) cachedPassword = pass
             if (cachedToken.isEmpty()) cachedToken = token
         }
-        if (scanGroups.isEmpty()) {
-            Thread { runCatching { loadScanGroups() } }.start()
-        }
+        if (scanGroups.isEmpty()) Thread { runCatching { loadScanGroups() } }.start()
+        if (genres.isEmpty()) Thread { runCatching { loadGenres() } }.start()
     }
 
     private fun loadScanGroups() {
@@ -110,6 +110,26 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             slug to displayName
         }
         if (groups.isNotEmpty()) scanGroups = groups
+    }
+
+    private fun loadGenres() {
+        val reqBuilder = Request.Builder().url("$api/api/genres?limit=200")
+        val t = cachedToken
+        if (t.isNotEmpty()) reqBuilder.header("Authorization", "Bearer $t")
+        val response = network.client.newCall(reqBuilder.build()).execute()
+        if (!response.isSuccessful) { response.close(); return }
+        val body = JSONObject(response.body!!.string())
+        response.close()
+        val arr = body.optJSONObject("data")?.optJSONArray("items")
+            ?: body.optJSONArray("data")
+            ?: return
+        val list = (0 until arr.length()).mapNotNull { i ->
+            val item = arr.getJSONObject(i)
+            val slug = item.optString("slug").ifEmpty { null } ?: return@mapNotNull null
+            val name = item.optString("name").ifEmpty { slug }
+            slug to name
+        }
+        if (list.isNotEmpty()) genres = list
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
@@ -153,7 +173,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         GET("$api/api/manga-custom?order=popular&limit=500&nsfw=false&page=$page", headersBuilder().build())
 
     override fun popularMangaParse(response: Response): MangasPage =
-        parseMangaCustomList(response.body!!.string(), "")
+        parseMangaCustomList(response, "")
 
     // ======================== Latest ========================
 
@@ -161,7 +181,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         GET("$api/api/manga-custom?order=latest&limit=500&nsfw=false&page=$page", headersBuilder().build())
 
     override fun latestUpdatesParse(response: Response): MangasPage =
-        parseMangaCustomList(response.body!!.string(), "")
+        parseMangaCustomList(response, "")
 
     // ======================== Search ========================
 
@@ -175,13 +195,19 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             }
             return GET("$api/api/user-list?limit=500", headersBuilder().build())
         }
+
         val selectedOrg = filters.filterIsInstance<ScanFilter>().firstOrNull()?.selectedSlug ?: ""
+        val selectedStatus = filters.filterIsInstance<StatusFilter>().firstOrNull()?.selectedValue ?: ""
+        val selectedGenre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.selectedSlug ?: ""
         val q = query.trim()
-        val url = if (q.isNotEmpty()) {
-            "$api/api/manga-custom?order=latest&limit=500&nsfw=false&search=${q.encodeUrl()}&page=$page"
-        } else {
-            "$api/api/manga-custom?order=latest&limit=500&nsfw=false&page=$page"
+
+        val url = buildString {
+            append("$api/api/manga-custom?order=latest&limit=500&nsfw=false&page=$page")
+            if (q.isNotEmpty()) append("&search=${q.encodeUrl()}")
+            if (selectedStatus.isNotEmpty()) append("&status=$selectedStatus")
+            if (selectedGenre.isNotEmpty()) append("&genre=$selectedGenre")
         }
+
         val headers = if (selectedOrg.isNotEmpty()) {
             headersBuilder().add("x-organization", selectedOrg).build()
         } else {
@@ -191,13 +217,12 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     }
 
     override fun searchMangaParse(response: Response): MangasPage {
-        val body = response.body!!.string()
         val url = response.request.url.toString()
         return if (url.contains("/user-list")) {
-            parseFavoritesList(body)
+            parseFavoritesList(response.body!!.string())
         } else {
             val org = response.request.header("x-organization") ?: ""
-            parseMangaCustomList(body, org)
+            parseMangaCustomList(response, org)
         }
     }
 
@@ -218,14 +243,17 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
 
     // ======================== Parse Helpers ========================
 
-    private fun parseMangaCustomList(body: String, filterOrg: String): MangasPage {
+    private fun parseMangaCustomList(response: Response, filterOrg: String): MangasPage {
+        val body = response.body!!.string()
         val obj = JSONObject(body)
         val data = obj.optJSONObject("data") ?: return MangasPage(emptyList(), false)
         val items = data.optJSONArray("items") ?: return MangasPage(emptyList(), false)
         val mangas = (0 until items.length())
             .mapNotNull { parseMangaCustomItem(items.getJSONObject(it)) }
             .filter { filterOrg.isEmpty() || it.url.startsWith("/$filterOrg/") }
-        return MangasPage(mangas, data.optBoolean("next", false))
+        val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
+        val maxPage = data.optInt("maxPage", 1)
+        return MangasPage(mangas, maxPage > currentPage)
     }
 
     private fun parseMangaCustomItem(obj: JSONObject): SManga? {
@@ -267,10 +295,10 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             description = obj.optString("description").takeIf { it.isNotEmpty() }
                 ?: obj.optString("shortDescription").takeIf { it.isNotEmpty() }
             status = parseStatus(obj.optString("status"))
-            val genres = obj.optJSONArray("genres")
-            if (genres != null) {
-                genre = (0 until genres.length())
-                    .joinToString { genres.optJSONObject(it)?.optString("name") ?: "" }
+            val genresArr = obj.optJSONArray("genres")
+            if (genresArr != null) {
+                genre = (0 until genresArr.length())
+                    .joinToString { genresArr.optJSONObject(it)?.optString("name") ?: "" }
                     .ifEmpty { null }
             }
             val authors = mangaObj?.optJSONArray("authors")
@@ -300,8 +328,9 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             val num = ch.optDouble("number", Double.NaN)
             if (num.isNaN()) return@mapNotNull null
             val numStr = if (num == num.toLong().toDouble()) num.toLong().toString() else num.toString()
+            val title = ch.optString("title")
             SChapter.create().apply {
-                name = ch.optString("title").ifEmpty { "Capítulo $numStr" }
+                name = if (title.isNotEmpty()) "$numStr - $title" else "Capítulo $numStr"
                 url = "/$oSlug/$mSlug/$numStr"
                 chapter_number = num.toFloat()
                 date_upload = runCatching {
@@ -359,20 +388,40 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
 
     // ======================== Filters ========================
 
-    override fun getFilterList() = FilterList(
-        if (scanGroups.isEmpty()) {
-            Filter.Header("Abre los filtros de nuevo para ver los scans")
-        } else {
-            ScanFilter(scanGroups)
-        },
-        FavoritesFilter(),
-    )
+    override fun getFilterList(): FilterList {
+        val list = mutableListOf<Filter<*>>()
+        val filtersLoaded = scanGroups.isNotEmpty() && genres.isNotEmpty()
+        if (!filtersLoaded) {
+            list.add(Filter.Header("Abre los filtros de nuevo para cargar scans y géneros"))
+        }
+        if (scanGroups.isNotEmpty()) list.add(ScanFilter(scanGroups))
+        list.add(StatusFilter())
+        if (genres.isNotEmpty()) list.add(GenreFilter(genres))
+        list.add(FavoritesFilter())
+        return FilterList(list)
+    }
 
     class ScanFilter(groups: List<Pair<String, String>>) : Filter.Select<String>(
         "Scan Group",
-        arrayOf("(Todos)") + groups.map { it.second }.toTypedArray(),
+        arrayOf("(Todos los Scans)") + groups.map { it.second }.toTypedArray(),
     ) {
         private val slugs = listOf("") + groups.map { it.first }
+        val selectedSlug: String get() = slugs.getOrElse(state) { "" }
+    }
+
+    class StatusFilter : Filter.Select<String>(
+        "Estado",
+        arrayOf("(Cualquier Estado)", "Publicándose", "Finalizado", "En pausa"),
+    ) {
+        private val values = listOf("", "ongoing", "completed", "hiatus")
+        val selectedValue: String get() = values.getOrElse(state) { "" }
+    }
+
+    class GenreFilter(genreList: List<Pair<String, String>>) : Filter.Select<String>(
+        "Género",
+        arrayOf("(Todos los Géneros)") + genreList.map { it.second }.toTypedArray(),
+    ) {
+        private val slugs = listOf("") + genreList.map { it.first }
         val selectedSlug: String get() = slugs.getOrElse(state) { "" }
     }
 
