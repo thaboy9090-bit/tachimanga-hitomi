@@ -93,19 +93,23 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     }
 
     private fun loadScanGroups() {
-        val response = network.client.newCall(
-            Request.Builder().url("$api/api/landing/scans?limit=100&sort=name").build(),
-        ).execute()
+        val reqBuilder = Request.Builder().url("$api/api/landing/scans?limit=500&sort=name")
+        val t = cachedToken
+        if (t.isNotEmpty()) reqBuilder.header("Authorization", "Bearer $t")
+        val response = network.client.newCall(reqBuilder.build()).execute()
         if (!response.isSuccessful) { response.close(); return }
         val body = JSONObject(response.body!!.string())
         response.close()
-        val items = body.optJSONObject("data")?.optJSONArray("items") ?: return
-        scanGroups = (0 until items.length()).mapNotNull { i ->
-            val item = items.getJSONObject(i)
+        val arr = body.optJSONObject("data")?.optJSONArray("items")
+            ?: body.optJSONArray("data")
+            ?: return
+        val groups = (0 until arr.length()).mapNotNull { i ->
+            val item = arr.getJSONObject(i)
             val slug = item.optString("slug").ifEmpty { null } ?: return@mapNotNull null
             val displayName = item.optString("name").ifEmpty { slug }
             slug to displayName
         }
+        if (groups.isNotEmpty()) scanGroups = groups
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
@@ -146,7 +150,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     // ======================== Popular ========================
 
     override fun popularMangaRequest(page: Int): Request =
-        GET("$api/api/manga-custom?order=popular&limit=24&nsfw=false&page=$page", headersBuilder().build())
+        GET("$api/api/manga-custom?order=popular&limit=500&nsfw=false&page=$page", headersBuilder().build())
 
     override fun popularMangaParse(response: Response): MangasPage =
         parseMangaCustomList(response.body!!.string(), "")
@@ -154,7 +158,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     // ======================== Latest ========================
 
     override fun latestUpdatesRequest(page: Int): Request =
-        GET("$api/api/manga-custom?order=latest&limit=30&nsfw=false&page=$page", headersBuilder().build())
+        GET("$api/api/manga-custom?order=latest&limit=500&nsfw=false&page=$page", headersBuilder().build())
 
     override fun latestUpdatesParse(response: Response): MangasPage =
         parseMangaCustomList(response.body!!.string(), "")
@@ -169,14 +173,14 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
                     if (tok != null) { cachedToken = tok; saveToken(baseUrl, tok) }
                 }
             }
-            return GET("$api/api/user/favorites/manga-custom?page=$page", headersBuilder().build())
+            return GET("$api/api/user-list?limit=500", headersBuilder().build())
         }
         val selectedOrg = filters.filterIsInstance<ScanFilter>().firstOrNull()?.selectedSlug ?: ""
         val q = query.trim()
         val url = if (q.isNotEmpty()) {
-            "$api/api/manga-custom?order=latest&limit=100&nsfw=false&search=${q.encodeUrl()}&page=$page"
+            "$api/api/manga-custom?order=latest&limit=500&nsfw=false&search=${q.encodeUrl()}&page=$page"
         } else {
-            "$api/api/manga-custom?order=latest&limit=30&nsfw=false&page=$page"
+            "$api/api/manga-custom?order=latest&limit=500&nsfw=false&page=$page"
         }
         val headers = if (selectedOrg.isNotEmpty()) {
             headersBuilder().add("x-organization", selectedOrg).build()
@@ -189,7 +193,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     override fun searchMangaParse(response: Response): MangasPage {
         val body = response.body!!.string()
         val url = response.request.url.toString()
-        return if (url.contains("/favorites/")) {
+        return if (url.contains("/user-list")) {
             parseFavoritesList(body)
         } else {
             val org = response.request.header("x-organization") ?: ""
@@ -208,7 +212,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
                 val mc = item.optJSONObject("mangaCustom") ?: item
                 parseMangaCustomItem(mc)
             }
-            MangasPage(mangas, data.optBoolean("next", false))
+            MangasPage(mangas, data.optInt("maxPage", 1) > 1)
         }.getOrDefault(MangasPage(emptyList(), false))
     }
 
