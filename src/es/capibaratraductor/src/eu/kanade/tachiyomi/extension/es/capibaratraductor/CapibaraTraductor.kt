@@ -363,26 +363,23 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             // path: api / manga-custom / {slug} / chapter / {num} / pages
             val mangaSlug = seg.getOrElse(2) { "" }
             val chapterNum = seg.getOrElse(4) { "" }
+            val org = response.request.header("x-organization") ?: ""
             if (mangaSlug.isNotEmpty() && chapterNum.isNotEmpty()) {
                 Thread {
                     runCatching {
-                        val authHeader = "Bearer $token"
-                        // Same as the "mark as read" button on the manga page
-                        network.client.newCall(
-                            Request.Builder()
-                                .url("$api/api/user-chapter-history/manga-custom/$mangaSlug/chapter/$chapterNum")
-                                .get()
-                                .header("Authorization", authHeader)
-                                .build(),
-                        ).execute().close()
-                        // Track page progress to last page
-                        network.client.newCall(
-                            Request.Builder()
-                                .url("$api/api/user-chapter-history/manga-custom/$mangaSlug/chapter/$chapterNum/pages/${pages.size}")
-                                .post("{}".toRequestBody("application/json".toMediaType()))
-                                .header("Authorization", authHeader)
-                                .build(),
-                        ).execute().close()
+                        val authHeader = "Bearer $cachedToken"
+                        val markRead = Request.Builder()
+                            .url("$api/api/user-chapter-history/manga-custom/$mangaSlug/chapter/$chapterNum")
+                            .get()
+                            .header("Authorization", authHeader)
+                        if (org.isNotEmpty()) markRead.header("x-organization", org)
+                        client.newCall(markRead.build()).execute().close()
+                        val trackPages = Request.Builder()
+                            .url("$api/api/user-chapter-history/manga-custom/$mangaSlug/chapter/$chapterNum/pages/${pages.size}")
+                            .post("{}".toRequestBody("application/json".toMediaType()))
+                            .header("Authorization", authHeader)
+                        if (org.isNotEmpty()) trackPages.header("x-organization", org)
+                        client.newCall(trackPages.build()).execute().close()
                     }
                 }.start()
             }
