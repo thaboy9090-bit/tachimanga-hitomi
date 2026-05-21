@@ -323,10 +323,33 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
 
     override fun pageListParse(response: Response): List<Page> {
         val arr = JSONObject(response.body!!.string()).optJSONArray("data") ?: return emptyList()
-        return (0 until arr.length()).map { i ->
+        val pages = (0 until arr.length()).map { i ->
             val p = arr.getJSONObject(i)
             Page(p.optInt("number", i + 1) - 1, "", p.optString("imageUrl"))
         }.sortedBy { it.index }
+
+        // Mark chapter as read on server (requires login)
+        if (cachedToken.isNotEmpty()) {
+            val seg = response.request.url.pathSegments
+            // path: api / manga-custom / {slug} / chapter / {num} / pages
+            val mangaSlug = seg.getOrElse(2) { "" }
+            val chapterNum = seg.getOrElse(4) { "" }
+            if (mangaSlug.isNotEmpty() && chapterNum.isNotEmpty()) {
+                Thread {
+                    runCatching {
+                        network.client.newCall(
+                            Request.Builder()
+                                .url("$api/api/user-chapter-history/manga-custom/$mangaSlug/chapter/$chapterNum")
+                                .post("{}".toRequestBody("application/json".toMediaType()))
+                                .header("Authorization", "Bearer $cachedToken")
+                                .build(),
+                        ).execute().close()
+                    }
+                }.start()
+            }
+        }
+
+        return pages
     }
 
     override fun imageRequest(page: Page): Request =
