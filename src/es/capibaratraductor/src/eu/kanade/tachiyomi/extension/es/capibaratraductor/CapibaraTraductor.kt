@@ -20,7 +20,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -34,19 +33,15 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
 
     private val api = baseUrl
 
-    private val orgSlug: String
-        get() = cachedOrgSlug.ifEmpty { "dnfansub" }
-
     companion object {
         @Volatile var cachedToken = ""
         @Volatile var cachedEmail = ""
         @Volatile var cachedPassword = ""
-        @Volatile var cachedOrgSlug = "dnfansub"
+        @Volatile var scanGroups: List<Pair<String, String>> = emptyList()
 
         private const val COOKIE_JWT = "ct_jwt"
         private const val COOKIE_EMAIL = "ct_email"
         private const val COOKIE_PASS = "ct_pass"
-        private const val COOKIE_ORG = "ct_org"
         private const val MAX_AGE = "max-age=31536000; path=/"
 
         private fun cookieMap(domain: String): Map<String, String> = runCatching {
@@ -65,10 +60,6 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             Triple(map[COOKIE_EMAIL] ?: "", map[COOKIE_PASS] ?: "", token)
         }.getOrNull()
 
-        fun readOrg(domain: String): String = runCatching {
-            cookieMap(domain)[COOKIE_ORG]?.takeIf { it.isNotEmpty() } ?: "dnfansub"
-        }.getOrDefault("dnfansub")
-
         fun saveCreds(domain: String, email: String, password: String, token: String) {
             runCatching {
                 val cm = android.webkit.CookieManager.getInstance()
@@ -76,15 +67,6 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
                 if (token.isNotEmpty()) cm.setCookie(domain, "$COOKIE_JWT=$token; $MAX_AGE")
                 if (email.isNotEmpty()) cm.setCookie(domain, "$COOKIE_EMAIL=$email; $MAX_AGE")
                 if (password.isNotEmpty()) cm.setCookie(domain, "$COOKIE_PASS=$password; $MAX_AGE")
-                cm.flush()
-            }
-        }
-
-        fun saveOrg(domain: String, slug: String) {
-            runCatching {
-                val cm = android.webkit.CookieManager.getInstance()
-                cm.setAcceptCookie(true)
-                cm.setCookie(domain, "$COOKIE_ORG=$slug; $MAX_AGE")
                 cm.flush()
             }
         }
@@ -105,17 +87,31 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             if (cachedPassword.isEmpty()) cachedPassword = pass
             if (cachedToken.isEmpty()) cachedToken = token
         }
-        val savedOrg = readOrg(baseUrl)
-        if (savedOrg.isNotEmpty()) cachedOrgSlug = savedOrg
+        if (scanGroups.isEmpty()) {
+            Thread { runCatching { loadScanGroups() } }.start()
+        }
+    }
+
+    private fun loadScanGroups() {
+        val response = network.client.newCall(
+            Request.Builder().url("$api/api/landing/scans?limit=100&sort=name").build(),
+        ).execute()
+        if (!response.isSuccessful) { response.close(); return }
+        val body = JSONObject(response.body!!.string())
+        response.close()
+        val items = body.optJSONObject("data")?.optJSONArray("items") ?: return
+        scanGroups = (0 until items.length()).mapNotNull { i ->
+            val item = items.getJSONObject(i)
+            val slug = item.optString("slug").ifEmpty { null } ?: return@mapNotNull null
+            val displayName = item.optString("name").ifEmpty { slug }
+            slug to displayName
+        }
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain ->
-            try {
-                chain.proceed(chain.request())
-            } catch (e: java.net.SocketTimeoutException) {
-                chain.proceed(chain.request())
-            }
+            try { chain.proceed(chain.request()) }
+            catch (e: java.net.SocketTimeoutException) { chain.proceed(chain.request()) }
         }
         .addInterceptor { chain ->
             val request = chain.request()
@@ -141,26 +137,27 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
                 cachedToken = token
             }
         }
-        val builder = b.add("x-organization", orgSlug)
         val t = cachedToken
-        if (t.isNotEmpty()) builder.add("Authorization", "Bearer $t") else builder
+        if (t.isNotEmpty()) b.add("Authorization", "Bearer $t") else b
     }
+
+    private fun orgHeaders(org: String) = headersBuilder().add("x-organization", org).build()
 
     // ======================== Popular ========================
 
     override fun popularMangaRequest(page: Int): Request =
-        GET("$api/api/manga-custom?order=popular&limit=50&nsfw=false&page=${page - 1}", headersBuilder().build())
+        GET("$api/api/manga-custom?order=popular&limit=24&nsfw=false&page=$page", headersBuilder().build())
 
     override fun popularMangaParse(response: Response): MangasPage =
-        parseMangaCustomList(response.body!!.string(), orgSlug)
+        parseMangaCustomList(response.body!!.string(), "")
 
     // ======================== Latest ========================
 
     override fun latestUpdatesRequest(page: Int): Request =
-        GET("$api/api/manga-custom?order=latest&limit=50&nsfw=false&page=${page - 1}", headersBuilder().build())
+        GET("$api/api/manga-custom?order=latest&limit=30&nsfw=false&page=$page", headersBuilder().build())
 
     override fun latestUpdatesParse(response: Response): MangasPage =
-        parseMangaCustomList(response.body!!.string(), orgSlug)
+        parseMangaCustomList(response.body!!.string(), "")
 
     // ======================== Search ========================
 
@@ -172,15 +169,21 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
                     if (tok != null) { cachedToken = tok; saveToken(baseUrl, tok) }
                 }
             }
-            return GET("$api/api/user/favorites/manga-custom?page=${page - 1}", headersBuilder().build())
+            return GET("$api/api/user/favorites/manga-custom?page=$page", headersBuilder().build())
         }
+        val selectedOrg = filters.filterIsInstance<ScanFilter>().firstOrNull()?.selectedSlug ?: ""
         val q = query.trim()
         val url = if (q.isNotEmpty()) {
-            "$api/api/manga-custom?order=latest&limit=100&nsfw=false&search=${q.encodeUrl()}&page=${page - 1}"
+            "$api/api/manga-custom?order=latest&limit=100&nsfw=false&search=${q.encodeUrl()}&page=$page"
         } else {
-            "$api/api/manga-custom?order=latest&limit=50&nsfw=false&page=${page - 1}"
+            "$api/api/manga-custom?order=latest&limit=30&nsfw=false&page=$page"
         }
-        return GET(url, headersBuilder().build())
+        val headers = if (selectedOrg.isNotEmpty()) {
+            headersBuilder().add("x-organization", selectedOrg).build()
+        } else {
+            headersBuilder().build()
+        }
+        return GET(url, headers)
     }
 
     override fun searchMangaParse(response: Response): MangasPage {
@@ -189,7 +192,8 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         return if (url.contains("/favorites/")) {
             parseFavoritesList(body)
         } else {
-            parseMangaCustomList(body, orgSlug)
+            val org = response.request.header("x-organization") ?: ""
+            parseMangaCustomList(body, org)
         }
     }
 
@@ -197,7 +201,8 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         return runCatching {
             val obj = JSONObject(body)
             val data = obj.optJSONObject("data") ?: return MangasPage(emptyList(), false)
-            val items = data.optJSONArray("items") ?: data.optJSONArray("data") ?: return MangasPage(emptyList(), false)
+            val items = data.optJSONArray("items") ?: data.optJSONArray("data")
+                ?: return MangasPage(emptyList(), false)
             val mangas = (0 until items.length()).mapNotNull { i ->
                 val item = items.getJSONObject(i)
                 val mc = item.optJSONObject("mangaCustom") ?: item
@@ -240,13 +245,14 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
 
     override fun mangaDetailsRequest(manga: SManga): Request {
         val (org, slug) = parseUrl(manga.url)
-        return GET("$api/api/manga-custom/$slug", headersBuilder().add("x-organization", org).build())
+        return GET("$api/api/manga-custom/$slug", orgHeaders(org))
     }
 
     override fun mangaDetailsParse(response: Response): SManga {
         val obj = JSONObject(response.body!!.string()).optJSONObject("data") ?: return SManga.create()
         val orgObj = obj.optJSONObject("organization")
-        val oSlug = orgObj?.optString("slug")?.ifEmpty { null } ?: orgSlug
+        val oSlug = orgObj?.optString("slug")?.ifEmpty { null }
+            ?: response.request.header("x-organization") ?: ""
         val mangaObj = obj.optJSONObject("manga")
         val mSlug = mangaObj?.optString("slug")?.ifEmpty { null } ?: obj.optString("slug")
         return SManga.create().apply {
@@ -265,7 +271,8 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             }
             val authors = mangaObj?.optJSONArray("authors")
             if (authors != null && authors.length() > 0) {
-                author = (0 until authors.length()).joinToString { authors.getJSONObject(it).optString("name") }
+                author = (0 until authors.length())
+                    .joinToString { authors.getJSONObject(it).optString("name") }
                 artist = author
             }
         }
@@ -278,7 +285,8 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     override fun chapterListParse(response: Response): List<SChapter> {
         val obj = JSONObject(response.body!!.string()).optJSONObject("data") ?: return emptyList()
         val orgObj = obj.optJSONObject("organization")
-        val oSlug = orgObj?.optString("slug")?.ifEmpty { null } ?: orgSlug
+        val oSlug = orgObj?.optString("slug")?.ifEmpty { null }
+            ?: response.request.header("x-organization") ?: ""
         val mangaObj = obj.optJSONObject("manga")
         val mSlug = mangaObj?.optString("slug")?.ifEmpty { null } ?: obj.optString("slug")
         val chapters = obj.optJSONArray("chapters") ?: return emptyList()
@@ -306,12 +314,11 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         val org = parts[0]
         val slug = parts[1]
         val num = parts[2]
-        return GET("$api/api/manga-custom/$slug/chapter/$num/pages", headersBuilder().add("x-organization", org).build())
+        return GET("$api/api/manga-custom/$slug/chapter/$num/pages", orgHeaders(org))
     }
 
     override fun pageListParse(response: Response): List<Page> {
-        val body = JSONObject(response.body!!.string())
-        val arr = body.optJSONArray("data") ?: return emptyList()
+        val arr = JSONObject(response.body!!.string()).optJSONArray("data") ?: return emptyList()
         return (0 until arr.length()).map { i ->
             val p = arr.getJSONObject(i)
             Page(p.optInt("number", i + 1) - 1, "", p.optString("imageUrl"))
@@ -326,8 +333,21 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     // ======================== Filters ========================
 
     override fun getFilterList() = FilterList(
+        if (scanGroups.isEmpty()) {
+            Filter.Header("Abre los filtros de nuevo para ver los scans")
+        } else {
+            ScanFilter(scanGroups)
+        },
         FavoritesFilter(),
     )
+
+    class ScanFilter(groups: List<Pair<String, String>>) : Filter.Select<String>(
+        "Scan Group",
+        arrayOf("(Todos)") + groups.map { it.second }.toTypedArray(),
+    ) {
+        private val slugs = listOf("") + groups.map { it.first }
+        val selectedSlug: String get() = slugs.getOrElse(state) { "" }
+    }
 
     class FavoritesFilter : Filter.CheckBox("Favoritos (requiere sesión)", false)
 
@@ -335,7 +355,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
 
     private fun parseUrl(url: String): Pair<String, String> {
         val parts = url.removePrefix("/").split("/")
-        return Pair(parts.getOrElse(0) { orgSlug }, parts.getOrElse(1) { "" })
+        return Pair(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" })
     }
 
     private fun parseStatus(s: String) = when (s.lowercase()) {
@@ -357,23 +377,6 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
                 cachedToken = token
             }
         }
-        val savedOrg = readOrg(baseUrl)
-        if (savedOrg.isNotEmpty()) cachedOrgSlug = savedOrg
-
-        EditTextPreference(screen.context).apply {
-            key = "org_slug"
-            title = "Scan Group"
-            summary = "Actual: $cachedOrgSlug\n\nEjemplos: dnfansub · senshimanga · scanz · rakuen · thebluebox"
-            text = cachedOrgSlug
-            setOnPreferenceChangeListener { pref: Preference, value: Any ->
-                val slug = value.toString().trim().lowercase()
-                if (slug.isEmpty()) return@setOnPreferenceChangeListener false
-                cachedOrgSlug = slug
-                saveOrg(baseUrl, slug)
-                pref.summary = "Actual: $slug\n\nEjemplos: dnfansub · senshimanga · scanz · rakuen · thebluebox"
-                true
-            }
-        }.also { screen.addPreference(it) }
 
         val emailPref = EditTextPreference(screen.context).apply {
             key = "email"
