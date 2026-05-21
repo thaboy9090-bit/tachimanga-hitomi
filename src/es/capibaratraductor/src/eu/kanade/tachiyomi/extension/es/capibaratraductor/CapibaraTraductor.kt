@@ -357,21 +357,30 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             Page(p.optInt("number", i + 1) - 1, "", p.optString("imageUrl"))
         }.sortedBy { it.index }
 
-        // Mark chapter as finished on server — POST to last page URL (requires login)
-        if (cachedToken.isNotEmpty() && pages.isNotEmpty()) {
+        val token = cachedToken
+        if (token.isNotEmpty() && pages.isNotEmpty()) {
             val seg = response.request.url.pathSegments
             // path: api / manga-custom / {slug} / chapter / {num} / pages
             val mangaSlug = seg.getOrElse(2) { "" }
             val chapterNum = seg.getOrElse(4) { "" }
-            val lastPage = pages.size  // 1-indexed last page number
             if (mangaSlug.isNotEmpty() && chapterNum.isNotEmpty()) {
                 Thread {
                     runCatching {
+                        val authHeader = "Bearer $token"
+                        // Same as the "mark as read" button on the manga page
                         network.client.newCall(
                             Request.Builder()
-                                .url("$api/api/user-chapter-history/manga-custom/$mangaSlug/chapter/$chapterNum/pages/$lastPage")
+                                .url("$api/api/user-chapter-history/manga-custom/$mangaSlug/chapter/$chapterNum")
+                                .get()
+                                .header("Authorization", authHeader)
+                                .build(),
+                        ).execute().close()
+                        // Track page progress to last page
+                        network.client.newCall(
+                            Request.Builder()
+                                .url("$api/api/user-chapter-history/manga-custom/$mangaSlug/chapter/$chapterNum/pages/${pages.size}")
                                 .post("{}".toRequestBody("application/json".toMediaType()))
-                                .header("Authorization", "Bearer $cachedToken")
+                                .header("Authorization", authHeader)
                                 .build(),
                         ).execute().close()
                     }
