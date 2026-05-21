@@ -413,8 +413,8 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         "Estado",
         arrayOf("(Cualquier Estado)", "Publicándose", "Finalizado", "En pausa"),
     ) {
-        private val values = listOf("", "ongoing", "completed", "hiatus")
-        val selectedValue: String get() = values.getOrElse(state) { "" }
+        private val apiValues = listOf("", "ongoing", "completed", "hiatus")
+        val selectedValue: String get() = apiValues.getOrElse(state) { "" }
     }
 
     class GenreFilter(genreList: List<Pair<String, String>>) : Filter.Select<String>(
