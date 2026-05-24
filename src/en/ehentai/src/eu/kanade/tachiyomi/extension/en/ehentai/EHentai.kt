@@ -40,21 +40,32 @@ class EHentai : HttpSource() {
 
     private val apiUrl = "https://api.e-hentai.org/api.php"
 
+    companion object {
+        // e-hentai uses cursor pagination (?next=galleryId); store cursor between pages
+        @Volatile private var cursorUrl = ""
+    }
+
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", baseUrl)
 
     // ======================== Popular ========================
 
-    override fun popularMangaRequest(page: Int): Request =
-        GET("$baseUrl/?page=${page - 1}", headers)
+    override fun popularMangaRequest(page: Int): Request {
+        if (page == 1) cursorUrl = ""
+        val url = if (page == 1 || cursorUrl.isEmpty()) "$baseUrl/" else cursorUrl
+        return GET(url, headers)
+    }
 
     override fun popularMangaParse(response: Response): MangasPage =
         parseGalleryList(response)
 
     // ======================== Latest ========================
 
-    override fun latestUpdatesRequest(page: Int): Request =
-        GET("$baseUrl/?page=${page - 1}", headers)
+    override fun latestUpdatesRequest(page: Int): Request {
+        if (page == 1) cursorUrl = ""
+        val url = if (page == 1 || cursorUrl.isEmpty()) "$baseUrl/" else cursorUrl
+        return GET(url, headers)
+    }
 
     override fun latestUpdatesParse(response: Response): MangasPage =
         parseGalleryList(response)
@@ -63,12 +74,17 @@ class EHentai : HttpSource() {
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         val fCats = filters.filterIsInstance<CategoryFilter>().firstOrNull()?.getExcludeMask() ?: 0
-        val url = buildString {
-            append("$baseUrl/?page=${page - 1}")
-            if (query.isNotEmpty()) append("&f_search=${query.encodeUrl()}")
-            if (fCats > 0) append("&f_cats=$fCats")
+        if (page == 1) cursorUrl = ""
+        val url = if (page > 1 && cursorUrl.isNotEmpty()) {
+            cursorUrl
+        } else {
+            buildString {
+                append("$baseUrl/?")
+                if (query.isNotEmpty()) append("f_search=${query.encodeUrl()}&")
+                if (fCats > 0) append("f_cats=$fCats&")
+            }.trimEnd('&', '?')
         }
-        return GET(url, headers)
+        return GET(url.ifEmpty { "$baseUrl/" }, headers)
     }
 
     override fun searchMangaParse(response: Response): MangasPage =
@@ -91,8 +107,9 @@ class EHentai : HttpSource() {
                 thumbnail_url = thumb
             }
         }
-        val hasNext = Regex("""var nexturl="([^"]+)"""").containsMatchIn(doc.html())
-        return MangasPage(mangas, hasNext)
+        val nextMatch = Regex("""var nexturl="([^"]+)"""").find(doc.html())
+        cursorUrl = nextMatch?.groupValues?.get(1)?.takeIf { it.isNotEmpty() } ?: ""
+        return MangasPage(mangas, cursorUrl.isNotEmpty())
     }
 
     // ======================== Details ========================
