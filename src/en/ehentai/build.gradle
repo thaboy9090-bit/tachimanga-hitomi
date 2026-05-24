@@ -1,0 +1,13 @@
+ext {
+    extName = 'E-Hentai'
+    extClass = '.EHentai'
+    extVersionCode = 1
+    pkgNameSuffix = 'en.ehentai'
+    nsfw = 1
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    compileOnly 'org.jsoup:jsoup:1.15.3'
+}

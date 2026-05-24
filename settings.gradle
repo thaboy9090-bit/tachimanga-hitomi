@@ -9,3 +9,6 @@ project(':src-es-manhwaweb').projectDir = new File('src/es/manhwaweb')
 
 include ':src-es-capibaratraductor'
 project(':src-es-capibaratraductor').projectDir = new File('src/es/capibaratraductor')
+
+include ':src-en-ehentai'
+project(':src-en-ehentai').projectDir = new File('src/en/ehentai')
