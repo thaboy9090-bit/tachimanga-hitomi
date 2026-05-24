@@ -82,7 +82,9 @@ class EHentai : HttpSource() {
             val href = anchor.attr("href").removePrefix(baseUrl)
             val title = row.selectFirst("div.glink")?.text()?.takeIf { it.isNotEmpty() }
                 ?: return@mapNotNull null
-            val thumb = row.selectFirst("td.gl2c img")?.attr("src")
+            val thumbImg = row.selectFirst("td.gl2c img")
+            val thumb = thumbImg?.attr("src")?.takeIf { !it.startsWith("data:") }
+                ?: thumbImg?.attr("data-src")?.takeIf { it.isNotEmpty() }
             SManga.create().apply {
                 url = href
                 this.title = title
