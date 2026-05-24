@@ -91,11 +91,7 @@ class EHentai : HttpSource() {
                 thumbnail_url = thumb
             }
         }
-        val currentPage = response.request.url.queryParameter("page")?.toIntOrNull() ?: 0
-        val hasNext = doc.select("table.ptt a[href]").any { a ->
-            val p = a.attr("href").substringAfter("page=", "").substringBefore("&").toIntOrNull()
-            p != null && p > currentPage
-        }
+        val hasNext = Regex("""var nexturl="([^"]+)"""").containsMatchIn(doc.html())
         return MangasPage(mangas, hasNext)
     }
 
