@@ -99,6 +99,17 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
         }
         .addInterceptor { chain ->
             val request = chain.request()
+            val host = request.url.host
+            // New ManhwaWeb image servers require Referer to serve images
+            val patched = if (host.endsWith("img1mw.xyz") || host.endsWith("img2mw.xyz")) {
+                request.newBuilder().header("Referer", baseUrl).build()
+            } else {
+                request
+            }
+            chain.proceed(patched)
+        }
+        .addInterceptor { chain ->
+            val request = chain.request()
             val response = chain.proceed(request)
             if (response.code != 401 || request.url.encodedPath.endsWith("/user/login")) {
                 return@addInterceptor response
