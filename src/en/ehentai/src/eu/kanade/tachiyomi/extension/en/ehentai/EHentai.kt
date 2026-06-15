@@ -172,10 +172,25 @@ class EHentai : HttpSource() {
         GET(baseUrl + chapter.url, headers)
 
     override fun pageListParse(response: Response): List<Page> {
-        val doc = Jsoup.parse(response.body!!.string())
-        return doc.select("div#gdt a[href]").mapIndexed { i, el ->
-            Page(i, el.attr("href"))
+        val firstDoc = Jsoup.parse(response.body!!.string())
+        val galleryBase = response.request.url.toString().substringBefore("?")
+
+        val links = mutableListOf<String>()
+        firstDoc.select("div#gdt a[href]").forEach { links.add(it.attr("href")) }
+
+        // Gallery images are split across internal pages (?p=0, ?p=1, …); collect them all
+        val maxPage = firstDoc.select("table.ptt td a[href]")
+            .mapNotNull { Regex("""[?&]p=(\d+)""").find(it.attr("href"))?.groupValues?.get(1)?.toInt() }
+            .maxOrNull() ?: 0
+
+        for (p in 1..maxPage) {
+            val doc = Jsoup.parse(
+                client.newCall(GET("$galleryBase?p=$p", headers)).execute().body!!.string(),
+            )
+            doc.select("div#gdt a[href]").forEach { links.add(it.attr("href")) }
         }
+
+        return links.mapIndexed { i, url -> Page(i, url) }
     }
 
     override fun imageUrlParse(response: Response): String {
