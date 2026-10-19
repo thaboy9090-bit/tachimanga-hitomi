@@ -1,0 +1,92 @@
+{
+  "name": "Tachimanga Extensions",
+  "badgeLabel": "TME",
+  "signingKey": "",
+  "contact": {
+    "website": "https://github.com/thaboy9090-bit/tachimanga-hitomi"
+  },
+  "extensionList": {
+    "extensions": [
+      {
+        "name": "E-Hentai",
+        "packageName": "eu.kanade.tachiyomi.extension.en.ehentai",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/apk/tachiyomi-en.ehentai-v1.4.5.apk",
+          "iconUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/icon/eu.kanade.tachiyomi.extension.en.ehentai.png"
+        },
+        "extensionLib": "1.6",
+        "versionCode": "5",
+        "versionName": "1.4.5",
+        "contentWarning": "CONTENT_WARNING_NSFW",
+        "sources": [
+          {
+            "id": "57122881048805941",
+            "name": "E-Hentai",
+            "language": "en",
+            "homeUrl": "https://e-hentai.org"
+          }
+        ]
+      },
+      {
+        "name": "Hitomi.la",
+        "packageName": "eu.kanade.tachiyomi.extension.es.hitomi",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/apk/tachiyomi-en.hitomi-v1.4.44.apk",
+          "iconUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/icon/eu.kanade.tachiyomi.extension.es.hitomi.png"
+        },
+        "extensionLib": "1.6",
+        "versionCode": "44",
+        "versionName": "1.4.44",
+        "contentWarning": "CONTENT_WARNING_NSFW",
+        "sources": [
+          {
+            "id": "5272382536346953209",
+            "name": "Hitomi.la",
+            "language": "es",
+            "homeUrl": "https://hitomi.la"
+          }
+        ]
+      },
+      {
+        "name": "CapibaraTraductor",
+        "packageName": "eu.kanade.tachiyomi.extension.es.capibaratraductor",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/apk/tachiyomi-es.capibaratraductor-v1.4.11.apk",
+          "iconUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/icon/eu.kanade.tachiyomi.extension.es.capibaratraductor.png"
+        },
+        "extensionLib": "1.6",
+        "versionCode": "11",
+        "versionName": "1.4.11",
+        "contentWarning": "CONTENT_WARNING_SAFE",
+        "sources": [
+          {
+            "id": "3335229490349802396",
+            "name": "CapibaraTraductor",
+            "language": "es",
+            "homeUrl": "https://capibaratraductor.com"
+          }
+        ]
+      },
+      {
+        "name": "ManhwaWeb",
+        "packageName": "eu.kanade.tachiyomi.extension.es.manhwaweb",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/apk/tachiyomi-es.manhwaweb-v1.4.44.apk",
+          "iconUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/icon/eu.kanade.tachiyomi.extension.es.manhwaweb.png"
+        },
+        "extensionLib": "1.6",
+        "versionCode": "44",
+        "versionName": "1.4.44",
+        "contentWarning": "CONTENT_WARNING_SAFE",
+        "sources": [
+          {
+            "id": "5943212552955476721",
+            "name": "ManhwaWeb",
+            "language": "es",
+            "homeUrl": "https://manhwaweb.com"
+          }
+        ]
+      }
+    ]
+  }
+}
