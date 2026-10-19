@@ -32,9 +32,34 @@ android {
         }
     }
 
+    // Llave fija del repositorio, restaurada en CI desde un secreto. Sin ella
+    // cada corrida firma con un debug.keystore distinto y el fingerprint de
+    // repo.json deja de calzar. Si no esta, caigo a la firma debug por defecto.
+    def repoKeystore = rootProject.file('signing/repo.keystore')
+    def repoKeystorePass = System.getenv('KEYSTORE_PASSWORD')
+
+    if (repoKeystore.exists() && repoKeystorePass) {
+        signingConfigs {
+            repo {
+                storeFile     repoKeystore
+                storePassword repoKeystorePass
+                keyAlias      System.getenv('KEYSTORE_ALIAS') ?: 'tachimanga'
+                keyPassword   repoKeystorePass
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            if (repoKeystore.exists() && repoKeystorePass) {
+                signingConfig signingConfigs.repo
+            }
+        }
         release {
             minifyEnabled false
+            if (repoKeystore.exists() && repoKeystorePass) {
+                signingConfig signingConfigs.repo
+            }
         }
     }
 

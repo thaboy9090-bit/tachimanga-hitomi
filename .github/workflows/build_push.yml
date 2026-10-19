@@ -59,7 +59,21 @@ jobs:
                       print(f"Created {icon} ({ext_name})")
           EOF
 
+      - name: Restore signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            mkdir -p signing
+            printf '%s' "$KEYSTORE_B64" | base64 -d > signing/repo.keystore
+            echo "Keystore restaurado desde el secreto."
+          else
+            echo "Sin SIGNING_KEYSTORE_B64: se usa la firma debug por defecto."
+          fi
+
       - name: Build APKs
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
@@ -93,8 +107,13 @@ jobs:
             fi
           done
 
-      - name: Generate index.min.json
+      - name: Generate index.min.json (legacy)
         run: python scripts/generate_index.py
+
+      - name: Generate v2 index (repo.json + index.pb)
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+        run: python scripts/gen_repo_v2.py
 
       - name: Deploy to repo branch
         uses: peaceiris/actions-gh-pages@v4

@@ -20,3 +20,6 @@ repo/
 # OS
 .DS_Store
 Thumbs.db
+
+# Keystore de firma (se restaura en CI desde un secreto)
+signing/
