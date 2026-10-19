@@ -30,7 +30,7 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
     override val lang = "es"
     override val supportsLatest = true
 
-    private val api = "https://manhwawebbackend-production.up.railway.app"
+    private val api = "https://api.manhwaweb.com"
 
     companion object {
         @Volatile var cachedToken = ""
