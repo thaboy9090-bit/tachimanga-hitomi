@@ -92,7 +92,7 @@ def build_index() -> list:
         icon_url = f"icon/{icon_filename}" if os.path.exists(icon_file) else ""
 
         entry = {
-            "name": ext_name,
+            "name": f"Tachiyomi: {ext_name}",
             "pkg": pkg,
             "apk": apk_file,
             "lang": actual_lang,
@@ -104,7 +104,7 @@ def build_index() -> list:
                 {
                     "name": ext_name,
                     "lang": actual_lang,
-                    "id": source_id,
+                    "id": str(source_id),
                     "baseUrl": base_url,
                     "versionId": 1,
                 }
