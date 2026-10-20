@@ -71,12 +71,12 @@
         "name": "ManhwaShot",
         "packageName": "eu.kanade.tachiyomi.extension.es.manhwashot",
         "resources": {
-          "apkUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/apk/tachiyomi-es.manhwashot-v1.4.1.apk",
+          "apkUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/apk/tachiyomi-es.manhwashot-v1.4.2.apk",
           "iconUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/icon/eu.kanade.tachiyomi.extension.es.manhwashot.png"
         },
         "extensionLib": "1.6",
-        "versionCode": "1",
-        "versionName": "1.4.1",
+        "versionCode": "2",
+        "versionName": "1.4.2",
         "contentWarning": "CONTENT_WARNING_NSFW",
         "sources": [
           {
