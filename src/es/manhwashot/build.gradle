@@ -1,7 +1,7 @@
 ext {
     extName = 'ManhwaShot'
     extClass = '.ManhwaShot'
-    extVersionCode = 1
+    extVersionCode = 2
     pkgNameSuffix = 'es.manhwashot'
     nsfw = 1
 }

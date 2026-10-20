@@ -12,11 +12,10 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.util.asJsoup
-import mihonx.source.utils.sourcePreferences
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.util.Calendar
@@ -27,13 +26,19 @@ class ManhwaShot : HttpSource(), ConfigurableSource {
     override val lang = "es"
     override val supportsLatest = true
 
-    private val preferences by lazy { sourcePreferences() }
-
-    // El dominio .lat rota cada tanto, asi que lo dejo editable.
+    // El dominio .lat rota cada tanto, asi que lo dejo editable. Lo guardo en
+    // una cookie igual que ManhwaWeb: es lo unico que el runtime de la app
+    // expone de verdad para persistir.
     override val baseUrl: String
-        get() = preferences.getString(PREF_DOMAIN, DEFAULT_DOMAIN)
-            ?.let(::normalizeDomain)
-            ?: DEFAULT_DOMAIN
+        get() {
+            if (cachedDomain.isEmpty()) cachedDomain = readDomain()
+            return cachedDomain.ifEmpty { DEFAULT_DOMAIN }
+        }
+
+    // Armo el documento con Jsoup directo; el baseUri sale de la peticion para
+    // que absUrl resuelva los enlaces relativos.
+    private fun Response.toDocument(): Document =
+        Jsoup.parse(body!!.string(), request.url.toString())
 
     // ======================== Listados ========================
 
@@ -52,13 +57,13 @@ class ManhwaShot : HttpSource(), ConfigurableSource {
         GET(listingUrl(page, "", "", ""), headers)
 
     override fun popularMangaParse(response: Response): MangasPage =
-        listingParse(response.asJsoup())
+        listingParse(response.toDocument())
 
     // La portada trae la seccion "Ultimas actualizaciones" y no se pagina.
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/", headers)
 
     override fun latestUpdatesParse(response: Response): MangasPage =
-        listingParse(response.asJsoup())
+        listingParse(response.toDocument())
 
     // Uso la busqueda del catalogo en vez de /api/search/ porque esa API
     // devuelve solo 8 resultados y no se pagina.
@@ -69,7 +74,7 @@ class ManhwaShot : HttpSource(), ConfigurableSource {
     }
 
     override fun searchMangaParse(response: Response): MangasPage =
-        listingParse(response.asJsoup())
+        listingParse(response.toDocument())
 
     private fun listingParse(document: Document): MangasPage {
         val mangas = document.select("div.s-card").map(::mangaFromCard)
@@ -89,7 +94,7 @@ class ManhwaShot : HttpSource(), ConfigurableSource {
     // ======================== Detalle ========================
 
     override fun mangaDetailsParse(response: Response): SManga {
-        val document = response.asJsoup()
+        val document = response.toDocument()
         return SManga.create().apply {
             title = document.selectFirst("h1.series-title")?.text().orEmpty()
             thumbnail_url = document.selectFirst("div.series-cover img")?.absUrl("src")
@@ -112,7 +117,7 @@ class ManhwaShot : HttpSource(), ConfigurableSource {
     // Vienen todos en el detalle; los que pasan de los 30 primeros solo llevan
     // display:none y los muestra el boton "Ver todos los capitulos".
     override fun chapterListParse(response: Response): List<SChapter> =
-        response.asJsoup().select("div.chapters-grid a.ch-row").map { element ->
+        response.toDocument().select("div.chapters-grid a.ch-row").map { element ->
             SChapter.create().apply {
                 setUrlWithoutDomain(element.attr("abs:href"))
                 val label = element.selectFirst("span.ch-num")?.text().orEmpty()
@@ -149,7 +154,7 @@ class ManhwaShot : HttpSource(), ConfigurableSource {
     // capitulo-51-1, y a veces le pegan el titulo), la extension cambia dentro
     // del mismo capitulo y la numeracion salta. Las leo tal cual.
     override fun pageListParse(response: Response): List<Page> =
-        response.asJsoup().select("main.reader-main img[src]")
+        response.toDocument().select("main.reader-main img[src]")
             .map { it.absUrl("src") }
             .filter { it.startsWith("http") }
             .mapIndexed { index, url -> Page(index, "", url) }
@@ -183,16 +188,16 @@ class ManhwaShot : HttpSource(), ConfigurableSource {
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         EditTextPreference(screen.context).apply {
-            key = PREF_DOMAIN
+            key = COOKIE_DOMAIN
             title = "Dominio"
             summary = baseUrl
             text = baseUrl
             dialogTitle = "Dominio de ManhwaShot"
-            dialogMessage = "Déjalo vacío para volver a $DEFAULT_DOMAIN.\n" +
-                "Reinicia la aplicación para que el cambio se aplique."
+            dialogMessage = "Déjalo vacío para volver a $DEFAULT_DOMAIN."
             setOnPreferenceChangeListener { preference: Preference, newValue: Any ->
                 val domain = normalizeDomain(newValue.toString())
-                preferences.edit().putString(PREF_DOMAIN, domain).apply()
+                cachedDomain = domain
+                saveDomain(domain)
                 preference.summary = domain
                 text = domain
                 true
@@ -200,17 +205,46 @@ class ManhwaShot : HttpSource(), ConfigurableSource {
         }.also(screen::addPreference)
     }
 
-    private fun normalizeDomain(input: String): String {
-        val trimmed = input.trim().trimEnd('/')
-        if (trimmed.isEmpty()) return DEFAULT_DOMAIN
-        return if (trimmed.startsWith("http")) trimmed else "https://$trimmed"
-    }
-
     companion object {
         private const val DEFAULT_DOMAIN = "https://manhwashot.lat"
-        private const val PREF_DOMAIN = "domain"
+        private const val COOKIE_DOMAIN = "ms_domain"
+        private const val MAX_AGE = "max-age=31536000; path=/"
+
+        @Volatile
+        private var cachedDomain = ""
 
         private val NUMBER_REGEX = Regex("""\d+(?:\.\d+)?""")
+
+        private fun normalizeDomain(input: String): String {
+            val trimmed = input.trim().trimEnd('/')
+            if (trimmed.isEmpty()) return DEFAULT_DOMAIN
+            return if (trimmed.startsWith("http")) trimmed else "https://$trimmed"
+        }
+
+        // Guardo y leo siempre contra el dominio por defecto, que hace de llave
+        // fija: si leyera contra el actual necesitaria el dominio para saber el
+        // dominio.
+        private fun readDomain(): String = runCatching {
+            android.webkit.CookieManager.getInstance().getCookie(DEFAULT_DOMAIN)
+                ?.split(";")
+                ?.firstNotNullOfOrNull { part ->
+                    val idx = part.indexOf('=')
+                    if (idx > 0 && part.substring(0, idx).trim() == COOKIE_DOMAIN) {
+                        part.substring(idx + 1).trim().takeIf { it.isNotEmpty() }
+                    } else {
+                        null
+                    }
+                }
+        }.getOrNull().orEmpty()
+
+        private fun saveDomain(domain: String) {
+            runCatching {
+                val cm = android.webkit.CookieManager.getInstance()
+                cm.setAcceptCookie(true)
+                cm.setCookie(DEFAULT_DOMAIN, "$COOKIE_DOMAIN=$domain; $MAX_AGE")
+                cm.flush()
+            }
+        }
 
         private val SECTIONS = listOf(
             "Todas" to "",
