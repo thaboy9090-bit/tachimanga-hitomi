@@ -91,12 +91,12 @@
         "name": "ManhwaWeb",
         "packageName": "eu.kanade.tachiyomi.extension.es.manhwaweb",
         "resources": {
-          "apkUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/apk/tachiyomi-es.manhwaweb-v1.4.44.apk",
+          "apkUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/apk/tachiyomi-es.manhwaweb-v1.4.45.apk",
           "iconUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/icon/eu.kanade.tachiyomi.extension.es.manhwaweb.png"
         },
         "extensionLib": "1.6",
-        "versionCode": "44",
-        "versionName": "1.4.44",
+        "versionCode": "45",
+        "versionName": "1.4.45",
         "contentWarning": "CONTENT_WARNING_SAFE",
         "sources": [
           {
