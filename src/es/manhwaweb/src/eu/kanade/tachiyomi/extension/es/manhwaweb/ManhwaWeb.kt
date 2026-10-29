@@ -290,10 +290,14 @@ class ManhwaWeb : HttpSource(), ConfigurableSource {
             val num = ch.optDouble("chapter", Double.NaN)
             if (num.isNaN()) return@mapNotNull null
             val numStr = if (num == num.toLong().toDouble()) num.toLong().toString() else num.toString()
-            // Use the link field to get the exact chapter ID (may include a version suffix like _01)
-            val chapterId = ch.optString("link").takeIf { it.isNotEmpty() }
-                ?.substringAfterLast("/")
-                ?: "$mangaId-$numStr"
+            // Some chapters carry no "link" and keep their real ID inside "versions".
+            // Guessing "$mangaId-$numStr" drops the version suffix and 404s.
+            val link = ch.optString("link").takeIf { it.isNotEmpty() }
+                ?: ch.optJSONArray("versions")
+                    ?.optJSONObject(0)
+                    ?.optString("link")
+                    ?.takeIf { it.isNotEmpty() }
+            val chapterId = link?.substringAfterLast("/") ?: "$mangaId-$numStr"
             SChapter.create().apply {
                 name = "Capítulo $numStr"
                 url = "/$chapterId"

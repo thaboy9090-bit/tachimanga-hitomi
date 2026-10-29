@@ -1,7 +1,7 @@
 ext {
     extName = 'ManhwaWeb'
     extClass = '.ManhwaWeb'
-    extVersionCode = 44
+    extVersionCode = 45
     pkgNameSuffix = 'es.manhwaweb'
     nsfw = 0
 }
