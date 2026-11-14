@@ -1,7 +1,10 @@
 package eu.kanade.tachiyomi.extension.es.capibaratraductor
 
+import android.annotation.SuppressLint
+import android.app.Application
 import android.os.Handler
 import android.os.Looper
+import android.webkit.WebView
 import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
@@ -20,9 +23,13 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class CapibaraTraductor : HttpSource(), ConfigurableSource {
 
@@ -44,6 +51,11 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         private const val COOKIE_EMAIL = "ct_email"
         private const val COOKIE_PASS = "ct_pass"
         private const val MAX_AGE = "max-age=31536000; path=/"
+
+        // El lector tarda en hidratar y descifrar, asi que sondeo hasta ~30 s.
+        private const val POLL_MS = 600L
+        private const val MAX_POLLS = 50
+        private const val TIMEOUT_S = 40L
 
         private fun cookieMap(domain: String): Map<String, String> = runCatching {
             android.webkit.CookieManager.getInstance().getCookie(domain)
@@ -357,11 +369,22 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             Page(p.optInt("number", i + 1) - 1, "", p.optString("imageUrl"))
         }.sortedBy { it.index }
 
-        // El sitio devuelve todas las paginas apuntando a una sola imagen de aviso: la URL
-        // real va cifrada en "ph" y su clave vive en el HTML del lector, no en la API.
-        // No es falta de sesion. Prefiero un error claro antes que mostrar el señuelo.
+        // La API entrega todas las paginas apuntando a una sola imagen señuelo: la URL real
+        // va cifrada y su clave vive en el HTML del lector. En vez de replicar ese cifrado
+        // dejo que el lector del sitio lo resuelva en un WebView y le saco el resultado.
         if (pages.size > 1 && pages.distinctBy { it.imageUrl }.size == 1) {
-            throw Exception("El sitio cifra las imágenes; este capítulo solo se puede leer en capibaratraductor.com")
+            val seg = response.request.url.pathSegments
+            val slug = seg.getOrElse(2) { "" }
+            val num = seg.getOrElse(4) { "" }
+            val org = response.request.header("x-organization").orEmpty()
+            if (slug.isEmpty() || num.isEmpty() || org.isEmpty()) {
+                throw Exception("No pude reconstruir la dirección del capítulo")
+            }
+            val real = pagesFromReader("$baseUrl/$org/manga/$slug/chapters/$num?page=1")
+            if (real.isEmpty()) {
+                throw Exception("El lector no entregó las imágenes; ábrelo en WebView e intenta de nuevo")
+            }
+            return real.mapIndexed { i, url -> Page(i, "", url) }
         }
 
         val token = cachedToken
@@ -393,6 +416,96 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         }
 
         return pages
+    }
+
+    // Recorro el arbol de fibers de React para encontrar el array de paginas que el lector
+    // ya descifro. Devuelve null mientras siga mostrando el señuelo, y entonces reintento.
+    private val readerScript = """
+        (function () {
+          function isPages(l) {
+            return Array.isArray(l) && l.length > 0 && l.every(function (p) {
+              return p && typeof p.imageUrl === 'string' && /^https?:/.test(p.imageUrl) &&
+                     typeof p.number === 'number' && typeof p.chapterId === 'number';
+            });
+          }
+          var pages = null;
+          function walk(f) {
+            for (; f; f = f.sibling) {
+              for (var h = f.memoizedState; h && typeof h === 'object' && 'next' in h && 'queue' in h; h = h.next) {
+                if (isPages(h.memoizedState) && (!pages || h.memoizedState.length > pages.length)) pages = h.memoizedState;
+              }
+              if (f.child) walk(f.child);
+            }
+          }
+          document.querySelectorAll('*').forEach(function (el) {
+            Object.keys(el).forEach(function (k) {
+              if (k.indexOf('__reactContainer${'$'}') === 0) {
+                var f = el[k];
+                walk(f.stateNode && f.stateNode.current || f);
+              }
+            });
+          });
+          if (!pages) return null;
+          var u = pages.map(function (p) { return p.imageUrl; });
+          return u.length > 1 && new Set(u).size === 1 ? null : JSON.stringify(u);
+        })();
+    """.trimIndent()
+
+    // Pido el Application por reflexion para no depender de Injekt, que no esta en el
+    // classpath de este repo y tampoco se si la app lo expone.
+    private fun appContext(): Application = Class.forName("android.app.ActivityThread")
+        .getMethod("currentApplication")
+        .invoke(null) as Application
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun pagesFromReader(readerUrl: String): List<String> {
+        val context = appContext()
+        val latch = CountDownLatch(1)
+        val result = AtomicReference<List<String>>(emptyList())
+        val handler = Handler(Looper.getMainLooper())
+        var webView: WebView? = null
+
+        handler.post {
+            val wv = WebView(context)
+            webView = wv
+            wv.settings.javaScriptEnabled = true
+            wv.settings.domStorageEnabled = true
+            wv.settings.blockNetworkImage = true
+            wv.settings.loadsImagesAutomatically = false
+            wv.settings.userAgentString = headers["User-Agent"]
+            wv.loadUrl(readerUrl)
+
+            var tries = 0
+            lateinit var poll: Runnable
+            poll = Runnable {
+                tries++
+                wv.evaluateJavascript(readerScript) { value ->
+                    val urls = parseScriptResult(value)
+                    when {
+                        urls.isNotEmpty() -> { result.set(urls); latch.countDown() }
+                        tries >= MAX_POLLS -> latch.countDown()
+                        else -> handler.postDelayed(poll, POLL_MS)
+                    }
+                }
+            }
+            handler.postDelayed(poll, POLL_MS)
+        }
+
+        latch.await(TIMEOUT_S, TimeUnit.SECONDS)
+        handler.post { webView?.destroy() }
+        return result.get()
+    }
+
+    // evaluateJavascript devuelve el valor como literal JSON, asi que el array llega
+    // envuelto en una cadena y hay que desempaquetarlo dos veces.
+    private fun parseScriptResult(value: String?): List<String> {
+        if (value.isNullOrEmpty() || value == "null") return emptyList()
+        return runCatching {
+            val inner = JSONArray("[$value]").optString(0)
+            if (inner.isEmpty()) return emptyList()
+            val arr = JSONArray(inner)
+            (0 until arr.length()).map { arr.getString(it) }
+        }.getOrDefault(emptyList())
     }
 
     override fun imageRequest(page: Page): Request =
