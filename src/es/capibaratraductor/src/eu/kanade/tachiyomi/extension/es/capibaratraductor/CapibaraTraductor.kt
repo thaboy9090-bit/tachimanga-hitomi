@@ -492,25 +492,50 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         })();
     """.trimIndent()
 
-    // Tachimanga no trae android.app.ActivityThread, asi que el Context lo guardo cuando
-    // abres los ajustes y dejo la reflexion solo como respaldo.
+    // Tachimanga no trae android.app.ActivityThread, asi que busco el Context por varias
+    // vias. La de los ajustes se pierde al reiniciar la app, por eso va primero la que
+    // hurga en el objeto network, que existe desde que se carga la fuente.
     private fun appContext(): Context {
         savedContext?.let { return it }
 
-        val porReflexion = runCatching {
-            val cls = Class.forName("android.app.ActivityThread")
-            val app = cls.getMethod("currentApplication").invoke(null)
-                ?: cls.getMethod("currentActivityThread").invoke(null)
-                    ?.let { cls.getMethod("getApplication").invoke(it) }
-            app as? Application
-        }.getOrNull()
-
-        if (porReflexion != null) {
-            savedContext = porReflexion
-            return porReflexion
+        val encontrado = contextDesdeNetwork() ?: contextPorReflexion()
+        if (encontrado != null) {
+            savedContext = encontrado
+            return encontrado
         }
         throw Exception("Abre los ajustes de la extensión una vez y vuelve a intentar")
     }
+
+    // El NetworkHelper de la app guarda un Context en algun campo; recorro su jerarquia
+    // de clases hasta dar con uno.
+    private fun contextDesdeNetwork(): Context? = runCatching {
+        var cls: Class<*>? = network.javaClass
+        while (cls != null) {
+            for (field in cls.declaredFields) {
+                val valor = runCatching {
+                    field.isAccessible = true
+                    field.get(network)
+                }.getOrNull()
+                if (valor is Context) return@runCatching valor
+            }
+            cls = cls.superclass
+        }
+        null
+    }.getOrNull()
+
+    private fun contextPorReflexion(): Context? = runCatching {
+        val desdeAppGlobals = runCatching {
+            Class.forName("android.app.AppGlobals")
+                .getMethod("getInitialApplication").invoke(null) as? Application
+        }.getOrNull()
+        if (desdeAppGlobals != null) return@runCatching desdeAppGlobals
+
+        val cls = Class.forName("android.app.ActivityThread")
+        val app = cls.getMethod("currentApplication").invoke(null)
+            ?: cls.getMethod("currentActivityThread").invoke(null)
+                ?.let { cls.getMethod("getApplication").invoke(it) }
+        app as? Application
+    }.getOrNull()
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun pagesFromReader(readerUrl: String): List<String> {
