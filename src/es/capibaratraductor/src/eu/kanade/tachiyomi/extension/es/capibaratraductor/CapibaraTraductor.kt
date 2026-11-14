@@ -343,6 +343,14 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     // ======================== Pages ========================
 
     override fun pageListRequest(chapter: SChapter): Request {
+        // Con el token vencido este endpoint responde 200 con imagenes señuelo en vez
+        // de 401, asi que el reintento por 401 nunca se dispara. Renuevo antes de pedir.
+        if (cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
+            runCatching {
+                val tok = performLogin(cachedEmail, cachedPassword)
+                if (tok != null) { cachedToken = tok; saveToken(baseUrl, tok) }
+            }
+        }
         val parts = chapter.url.removePrefix("/").split("/")
         val org = parts[0]
         val slug = parts[1]
@@ -356,6 +364,12 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             val p = arr.getJSONObject(i)
             Page(p.optInt("number", i + 1) - 1, "", p.optString("imageUrl"))
         }.sortedBy { it.index }
+
+        // Sin sesion el sitio devuelve todas las paginas apuntando a una sola imagen de
+        // aviso. Prefiero un error claro antes que dejar leer un capitulo falso.
+        if (pages.size > 1 && pages.distinctBy { it.imageUrl }.size == 1) {
+            throw Exception("Inicia sesión en los ajustes de la extensión para leer este capítulo")
+        }
 
         val token = cachedToken
         if (token.isNotEmpty() && pages.isNotEmpty()) {
