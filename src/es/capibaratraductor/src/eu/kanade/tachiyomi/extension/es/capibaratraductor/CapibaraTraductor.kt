@@ -52,10 +52,16 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         private const val COOKIE_PASS = "ct_pass"
         private const val MAX_AGE = "max-age=31536000; path=/"
 
-        // El lector tarda en hidratar y descifrar, asi que sondeo hasta ~30 s.
+        // El lector tarda en hidratar y descifrar, asi que sondeo hasta ~45 s.
         private const val POLL_MS = 600L
-        private const val MAX_POLLS = 50
-        private const val TIMEOUT_S = 40L
+        private const val MAX_POLLS = 75
+        private const val TIMEOUT_S = 55L
+        private const val WV_WIDTH = 1080
+        private const val WV_HEIGHT = 1920
+
+        // Para que el mensaje de error diga en que se quedo el lector.
+        @Volatile var lastReaderState = ""
+        @Volatile var lastReaderTries = 0
 
         private fun cookieMap(domain: String): Map<String, String> = runCatching {
             android.webkit.CookieManager.getInstance().getCookie(domain)
@@ -382,7 +388,11 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             }
             val real = pagesFromReader("$baseUrl/$org/manga/$slug/chapters/$num?page=1")
             if (real.isEmpty()) {
-                throw Exception("El lector no entregó las imágenes; ábrelo en WebView e intenta de nuevo")
+                throw Exception(
+                    "El lector no entregó las imágenes " +
+                        "(estado: ${lastReaderState.ifEmpty { "sin iniciar" }}, " +
+                        "intentos: $lastReaderTries)",
+                )
             }
             return real.mapIndexed { i, url -> Page(i, "", url) }
         }
@@ -464,18 +474,34 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         val result = AtomicReference<List<String>>(emptyList())
         val handler = Handler(Looper.getMainLooper())
         var webView: WebView? = null
+        var tries = 0
 
         handler.post {
             val wv = WebView(context)
             webView = wv
             wv.settings.javaScriptEnabled = true
             wv.settings.domStorageEnabled = true
-            wv.settings.blockNetworkImage = true
-            wv.settings.loadsImagesAutomatically = false
+            wv.settings.databaseEnabled = true
             wv.settings.userAgentString = headers["User-Agent"]
+            // Sin ventana el WebView queda en 0x0 y React no hidrata, asi que lo mido a mano.
+            wv.measure(WV_WIDTH, WV_HEIGHT)
+            wv.layout(0, 0, WV_WIDTH, WV_HEIGHT)
+            wv.webViewClient = object : android.webkit.WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    lastReaderState = "cargado"
+                }
+
+                override fun onReceivedError(
+                    view: WebView?,
+                    request: android.webkit.WebResourceRequest?,
+                    error: android.webkit.WebResourceError?,
+                ) {
+                    if (request?.isForMainFrame == true) lastReaderState = "error de carga"
+                }
+            }
+            lastReaderState = "cargando"
             wv.loadUrl(readerUrl)
 
-            var tries = 0
             lateinit var poll: Runnable
             poll = Runnable {
                 tries++
@@ -492,6 +518,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         }
 
         latch.await(TIMEOUT_S, TimeUnit.SECONDS)
+        lastReaderTries = tries
         handler.post { webView?.destroy() }
         return result.get()
     }
