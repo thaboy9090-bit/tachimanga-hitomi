@@ -47,6 +47,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         @Volatile var cachedPassword = ""
         @Volatile var scanGroups: List<Pair<String, String>> = emptyList()
         @Volatile var genres: List<Pair<String, String>> = emptyList()
+        @Volatile var demographies: List<Pair<String, String>> = emptyList()
 
         private const val COOKIE_JWT = "ct_jwt"
         private const val COOKIE_EMAIL = "ct_email"
@@ -111,6 +112,7 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         }
         if (scanGroups.isEmpty()) Thread { runCatching { loadScanGroups() } }.start()
         if (genres.isEmpty()) Thread { runCatching { loadGenres() } }.start()
+        if (demographies.isEmpty()) Thread { runCatching { loadDemographies() } }.start()
     }
 
     private fun loadScanGroups() {
@@ -133,8 +135,24 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         if (groups.isNotEmpty()) scanGroups = groups
     }
 
+    private fun loadDemographies() {
+        val response = network.client.newCall(
+            Request.Builder().url("$api/api/demography").build(),
+        ).execute()
+        if (!response.isSuccessful) { response.close(); return }
+        val body = JSONObject(response.body!!.string())
+        response.close()
+        val arr = body.optJSONArray("data") ?: return
+        val list = (0 until arr.length()).mapNotNull { i ->
+            val item = arr.getJSONObject(i)
+            val slug = item.optString("slug").ifEmpty { null } ?: return@mapNotNull null
+            slug to item.optString("name").ifEmpty { slug }
+        }
+        if (list.isNotEmpty()) demographies = list
+    }
+
     private fun loadGenres() {
-        val reqBuilder = Request.Builder().url("$api/api/genres?limit=200")
+        val reqBuilder = Request.Builder().url("$api/api/genre")
         val t = cachedToken
         if (t.isNotEmpty()) reqBuilder.header("Authorization", "Bearer $t")
         val response = network.client.newCall(reqBuilder.build()).execute()
@@ -219,14 +237,24 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
 
         val selectedOrg = filters.filterIsInstance<ScanFilter>().firstOrNull()?.selectedSlug ?: ""
         val selectedStatus = filters.filterIsInstance<StatusFilter>().firstOrNull()?.selectedValue ?: ""
-        val selectedGenre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.selectedSlug ?: ""
+        val selectedSort = filters.filterIsInstance<SortFilter>().firstOrNull()?.selectedValue ?: "latest"
+        val selectedType = filters.filterIsInstance<TypeFilter>().firstOrNull()?.selectedValue
+            ?: "manga,manhwa,manhua"
+        val selectedDemography = filters.filterIsInstance<DemographyFilter>().firstOrNull()?.selectedSlug ?: ""
+        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
+        val nsfw = filters.filterIsInstance<NsfwFilter>().firstOrNull()?.state == true
         val q = query.trim()
 
         val url = buildString {
-            append("$api/api/manga-custom?page=$page&limit=24&order=latest&nsfw=false")
+            append("$api/api/manga-custom?page=$page&limit=24")
+            append("&order=$selectedSort&type=$selectedType&nsfw=$nsfw")
             if (q.isNotEmpty()) append("&search=${q.encodeUrl()}")
             if (selectedStatus.isNotEmpty()) append("&status=$selectedStatus")
-            if (selectedGenre.isNotEmpty()) append("&genre=$selectedGenre")
+            if (selectedDemography.isNotEmpty()) append("&demography=$selectedDemography")
+            genreFilter?.included?.takeIf { it.isNotEmpty() }
+                ?.let { append("&genre=${it.joinToString(",")}") }
+            genreFilter?.excluded?.takeIf { it.isNotEmpty() }
+                ?.let { append("&excludeGenre=${it.joinToString(",")}") }
         }
 
         val headers = if (selectedOrg.isNotEmpty()) {
@@ -566,8 +594,12 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             list.add(Filter.Header("Abre los filtros de nuevo para cargar scans y géneros"))
         }
         if (scanGroups.isNotEmpty()) list.add(ScanFilter(scanGroups))
+        list.add(SortFilter())
+        list.add(TypeFilter())
         list.add(StatusFilter())
+        if (demographies.isNotEmpty()) list.add(DemographyFilter(demographies))
         if (genres.isNotEmpty()) list.add(GenreFilter(genres))
+        list.add(NsfwFilter())
         list.add(FavoritesFilter())
         return FilterList(list)
     }
@@ -582,19 +614,46 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
 
     class StatusFilter : Filter.Select<String>(
         "Estado",
-        arrayOf("(Cualquier Estado)", "Publicándose", "Finalizado", "En pausa"),
+        arrayOf("(Cualquier Estado)", "Publicándose", "Finalizado", "En pausa", "Cancelado"),
     ) {
-        private val apiValues = listOf("", "ongoing", "completed", "hiatus")
+        private val apiValues = listOf("", "ongoing", "completed", "hiatus", "cancelled")
         val selectedValue: String get() = apiValues.getOrElse(state) { "" }
     }
 
-    class GenreFilter(genreList: List<Pair<String, String>>) : Filter.Select<String>(
-        "Género",
-        arrayOf("(Todos los Géneros)") + genreList.map { it.second }.toTypedArray(),
+    class GenreOption(name: String, val slug: String) : Filter.TriState(name)
+
+    // Tri-estado: un toque incluye el genero, dos lo excluyen.
+    class GenreFilter(genreList: List<Pair<String, String>>) :
+        Filter.Group<GenreOption>("Géneros", genreList.map { GenreOption(it.second, it.first) }) {
+        val included: List<String> get() = state.filter { it.isIncluded() }.map { it.slug }
+        val excluded: List<String> get() = state.filter { it.isExcluded() }.map { it.slug }
+    }
+
+    class SortFilter : Filter.Select<String>(
+        "Ordenar por",
+        arrayOf("Recientes", "Popularidad", "Nuevos", "Más capítulos", "A-Z"),
     ) {
-        private val slugs = listOf("") + genreList.map { it.first }
+        private val apiValues = listOf("latest", "popular", "newest", "most_chapters", "alphabetical")
+        val selectedValue: String get() = apiValues.getOrElse(state) { "latest" }
+    }
+
+    class TypeFilter : Filter.Select<String>(
+        "Tipo",
+        arrayOf("(Todos)", "Manga", "Manhwa", "Manhua"),
+    ) {
+        private val apiValues = listOf("manga,manhwa,manhua", "manga", "manhwa", "manhua")
+        val selectedValue: String get() = apiValues.getOrElse(state) { "manga,manhwa,manhua" }
+    }
+
+    class DemographyFilter(list: List<Pair<String, String>>) : Filter.Select<String>(
+        "Demografía",
+        arrayOf("(Cualquiera)") + list.map { it.second }.toTypedArray(),
+    ) {
+        private val slugs = listOf("") + list.map { it.first }
         val selectedSlug: String get() = slugs.getOrElse(state) { "" }
     }
+
+    class NsfwFilter : Filter.CheckBox("Incluir +18", false)
 
     class FavoritesFilter : Filter.CheckBox("Favoritos (requiere sesión)", false)
 
