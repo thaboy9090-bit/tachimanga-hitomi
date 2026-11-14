@@ -343,14 +343,6 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     // ======================== Pages ========================
 
     override fun pageListRequest(chapter: SChapter): Request {
-        // Con el token vencido este endpoint responde 200 con imagenes señuelo en vez
-        // de 401, asi que el reintento por 401 nunca se dispara. Renuevo antes de pedir.
-        if (cachedEmail.isNotEmpty() && cachedPassword.isNotEmpty()) {
-            runCatching {
-                val tok = performLogin(cachedEmail, cachedPassword)
-                if (tok != null) { cachedToken = tok; saveToken(baseUrl, tok) }
-            }
-        }
         val parts = chapter.url.removePrefix("/").split("/")
         val org = parts[0]
         val slug = parts[1]
@@ -365,10 +357,11 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
             Page(p.optInt("number", i + 1) - 1, "", p.optString("imageUrl"))
         }.sortedBy { it.index }
 
-        // Sin sesion el sitio devuelve todas las paginas apuntando a una sola imagen de
-        // aviso. Prefiero un error claro antes que dejar leer un capitulo falso.
+        // El sitio devuelve todas las paginas apuntando a una sola imagen de aviso: la URL
+        // real va cifrada en "ph" y su clave vive en el HTML del lector, no en la API.
+        // No es falta de sesion. Prefiero un error claro antes que mostrar el señuelo.
         if (pages.size > 1 && pages.distinctBy { it.imageUrl }.size == 1) {
-            throw Exception("Inicia sesión en los ajustes de la extensión para leer este capítulo")
+            throw Exception("El sitio cifra las imágenes; este capítulo solo se puede leer en capibaratraductor.com")
         }
 
         val token = cachedToken
