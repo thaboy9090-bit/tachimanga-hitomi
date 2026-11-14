@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.extension.es.capibaratraductor
 
 import android.annotation.SuppressLint
 import android.app.Application
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
@@ -62,6 +63,8 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         // Para que el mensaje de error diga en que se quedo el lector.
         @Volatile var lastReaderState = ""
         @Volatile var lastReaderTries = 0
+
+        @Volatile var savedContext: Context? = null
 
         private fun cookieMap(domain: String): Map<String, String> = runCatching {
             android.webkit.CookieManager.getInstance().getCookie(domain)
@@ -461,11 +464,25 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         })();
     """.trimIndent()
 
-    // Pido el Application por reflexion para no depender de Injekt, que no esta en el
-    // classpath de este repo y tampoco se si la app lo expone.
-    private fun appContext(): Application = Class.forName("android.app.ActivityThread")
-        .getMethod("currentApplication")
-        .invoke(null) as Application
+    // Tachimanga no trae android.app.ActivityThread, asi que el Context lo guardo cuando
+    // abres los ajustes y dejo la reflexion solo como respaldo.
+    private fun appContext(): Context {
+        savedContext?.let { return it }
+
+        val porReflexion = runCatching {
+            val cls = Class.forName("android.app.ActivityThread")
+            val app = cls.getMethod("currentApplication").invoke(null)
+                ?: cls.getMethod("currentActivityThread").invoke(null)
+                    ?.let { cls.getMethod("getApplication").invoke(it) }
+            app as? Application
+        }.getOrNull()
+
+        if (porReflexion != null) {
+            savedContext = porReflexion
+            return porReflexion
+        }
+        throw Exception("Abre los ajustes de la extensión una vez y vuelve a intentar")
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun pagesFromReader(readerUrl: String): List<String> {
@@ -600,6 +617,8 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     // ======================== Login / Preferencias ========================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        savedContext = screen.context
+
         if (cachedToken.isEmpty()) {
             readCreds(baseUrl)?.let { (email, pass, token) ->
                 if (cachedEmail.isEmpty()) cachedEmail = email
