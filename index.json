@@ -51,12 +51,12 @@
         "name": "CapibaraTraductor",
         "packageName": "eu.kanade.tachiyomi.extension.es.capibaratraductor",
         "resources": {
-          "apkUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/apk/tachiyomi-es.capibaratraductor-v1.4.20.apk",
+          "apkUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/apk/tachiyomi-es.capibaratraductor-v1.4.21.apk",
           "iconUrl": "https://raw.githubusercontent.com/thaboy9090-bit/tachimanga-hitomi/repo/icon/eu.kanade.tachiyomi.extension.es.capibaratraductor.png"
         },
         "extensionLib": "1.6",
-        "versionCode": "20",
-        "versionName": "1.4.20",
+        "versionCode": "21",
+        "versionName": "1.4.21",
         "contentWarning": "CONTENT_WARNING_SAFE",
         "sources": [
           {
