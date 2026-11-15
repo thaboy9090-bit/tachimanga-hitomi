@@ -492,70 +492,86 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         })();
     """.trimIndent()
 
-    // Tachimanga no trae android.app.ActivityThread, asi que busco el Context por varias
-    // vias. La de los ajustes se pierde al reiniciar la app, por eso va primero la que
-    // hurga en el objeto network, que existe desde que se carga la fuente.
+    // El Context es el punto flojo: cada via funciona o no segun el runtime, asi que
+    // pruebo varias y dejo anotado que paso en cada una para que el error lo diga.
     private fun appContext(): Context {
         savedContext?.let { return it }
 
-        val encontrado = contextDesdeInjekt() ?: contextDesdeNetwork() ?: contextPorReflexion()
+        val notas = mutableListOf<String>()
+        val encontrado = desdeInjekt(notas) ?: desdeNetwork(notas) ?: desdeFramework(notas)
         if (encontrado != null) {
             savedContext = encontrado
             return encontrado
         }
-        throw Exception("Abre los ajustes de la extensión una vez y vuelve a intentar")
+        throw Exception("Sin Context [${notas.joinToString(" | ")}]")
     }
 
-    // Asi lo hace keiyoushi, cuya extension si sobrevive al reinicio: la app expone Injekt
-    // en ejecucion aunque la dependencia no resuelva al compilar, de ahi la reflexion.
-    private fun contextDesdeInjekt(): Context? = runCatching {
-        val injekt = Class.forName("uy.kohesive.injekt.Injekt")
-            .getField("INSTANCE").get(null)
+    private fun desdeInjekt(notas: MutableList<String>): Context? {
+        val injekt = runCatching {
+            Class.forName("uy.kohesive.injekt.Injekt").getField("INSTANCE").get(null)
+        }.getOrNull()
+        if (injekt == null) {
+            notas.add("injekt:ausente")
+            return null
+        }
+
+        val metodos = mutableListOf<String>()
         var cls: Class<*>? = injekt.javaClass
         while (cls != null) {
-            for (metodo in cls.declaredMethods) {
-                if (metodo.name != "getInstance" || metodo.parameterTypes.size != 1) continue
+            for (m in cls.declaredMethods) {
+                if (m.parameterTypes.size != 1) continue
+                if (!m.name.contains("get", ignoreCase = true)) continue
+                metodos.add(m.name)
                 val valor = runCatching {
-                    metodo.isAccessible = true
-                    metodo.invoke(injekt, Application::class.java)
+                    m.isAccessible = true
+                    m.invoke(injekt, Application::class.java)
                 }.getOrNull()
-                if (valor is Context) return@runCatching valor
+                if (valor is Context) return valor
             }
             cls = cls.superclass
         }
-        null
-    }.getOrNull()
+        notas.add("injekt:sin-ctx(${metodos.distinct().take(4).joinToString(",")})")
+        return null
+    }
 
-    // El NetworkHelper de la app guarda un Context en algun campo; recorro su jerarquia
-    // de clases hasta dar con uno.
-    private fun contextDesdeNetwork(): Context? = runCatching {
+    private fun desdeNetwork(notas: MutableList<String>): Context? {
+        var campos = 0
         var cls: Class<*>? = network.javaClass
         while (cls != null) {
             for (field in cls.declaredFields) {
+                campos++
                 val valor = runCatching {
                     field.isAccessible = true
                     field.get(network)
                 }.getOrNull()
-                if (valor is Context) return@runCatching valor
+                if (valor is Context) return valor
             }
             cls = cls.superclass
         }
-        null
-    }.getOrNull()
+        notas.add("network:sin-ctx($campos campos)")
+        return null
+    }
 
-    private fun contextPorReflexion(): Context? = runCatching {
-        val desdeAppGlobals = runCatching {
+    private fun desdeFramework(notas: MutableList<String>): Context? {
+        val globals = runCatching {
             Class.forName("android.app.AppGlobals")
                 .getMethod("getInitialApplication").invoke(null) as? Application
         }.getOrNull()
-        if (desdeAppGlobals != null) return@runCatching desdeAppGlobals
+        if (globals != null) return globals
 
-        val cls = Class.forName("android.app.ActivityThread")
-        val app = cls.getMethod("currentApplication").invoke(null)
-            ?: cls.getMethod("currentActivityThread").invoke(null)
-                ?.let { cls.getMethod("getApplication").invoke(it) }
-        app as? Application
-    }.getOrNull()
+        val thread = runCatching {
+            val cls = Class.forName("android.app.ActivityThread")
+            (
+                cls.getMethod("currentApplication").invoke(null)
+                    ?: cls.getMethod("currentActivityThread").invoke(null)
+                        ?.let { cls.getMethod("getApplication").invoke(it) }
+                ) as? Application
+        }.getOrNull()
+        if (thread != null) return thread
+
+        notas.add("framework:ausente")
+        return null
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun pagesFromReader(readerUrl: String): List<String> {
