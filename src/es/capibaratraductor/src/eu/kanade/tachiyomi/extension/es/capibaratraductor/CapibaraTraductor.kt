@@ -498,13 +498,33 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
     private fun appContext(): Context {
         savedContext?.let { return it }
 
-        val encontrado = contextDesdeNetwork() ?: contextPorReflexion()
+        val encontrado = contextDesdeInjekt() ?: contextDesdeNetwork() ?: contextPorReflexion()
         if (encontrado != null) {
             savedContext = encontrado
             return encontrado
         }
         throw Exception("Abre los ajustes de la extensión una vez y vuelve a intentar")
     }
+
+    // Asi lo hace keiyoushi, cuya extension si sobrevive al reinicio: la app expone Injekt
+    // en ejecucion aunque la dependencia no resuelva al compilar, de ahi la reflexion.
+    private fun contextDesdeInjekt(): Context? = runCatching {
+        val injekt = Class.forName("uy.kohesive.injekt.Injekt")
+            .getField("INSTANCE").get(null)
+        var cls: Class<*>? = injekt.javaClass
+        while (cls != null) {
+            for (metodo in cls.declaredMethods) {
+                if (metodo.name != "getInstance" || metodo.parameterTypes.size != 1) continue
+                val valor = runCatching {
+                    metodo.isAccessible = true
+                    metodo.invoke(injekt, Application::class.java)
+                }.getOrNull()
+                if (valor is Context) return@runCatching valor
+            }
+            cls = cls.superclass
+        }
+        null
+    }.getOrNull()
 
     // El NetworkHelper de la app guarda un Context en algun campo; recorro su jerarquia
     // de clases hasta dar con uno.
