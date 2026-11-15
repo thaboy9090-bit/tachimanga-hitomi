@@ -506,31 +506,47 @@ class CapibaraTraductor : HttpSource(), ConfigurableSource {
         throw Exception("Sin Context [${notas.joinToString(" | ")}]")
     }
 
+    // No es un objeto con INSTANCE: Injekt es una propiedad de nivel superior, asi que
+    // la via real es InjektKt.getInjekt() y pedirle el Application al scope que devuelve.
     private fun desdeInjekt(notas: MutableList<String>): Context? {
-        val injekt = runCatching {
-            Class.forName("uy.kohesive.injekt.Injekt").getField("INSTANCE").get(null)
-        }.getOrNull()
-        if (injekt == null) {
-            notas.add("injekt:ausente")
+        val loaders = listOf(
+            javaClass.classLoader,
+            HttpSource::class.java.classLoader,
+            Thread.currentThread().contextClassLoader,
+        )
+
+        var scope: Any? = null
+        for (loader in loaders) {
+            if (loader == null) continue
+            scope = runCatching {
+                Class.forName("uy.kohesive.injekt.InjektKt", true, loader)
+                    .getMethod("getInjekt")
+                    .invoke(null)
+            }.getOrNull()
+            if (scope != null) break
+        }
+
+        if (scope == null) {
+            notas.add("injekt:sin-scope")
             return null
         }
 
-        val metodos = mutableListOf<String>()
-        var cls: Class<*>? = injekt.javaClass
+        val probados = mutableListOf<String>()
+        var cls: Class<*>? = scope.javaClass
         while (cls != null) {
-            for (m in cls.declaredMethods) {
+            for (m in cls.methods + cls.declaredMethods) {
                 if (m.parameterTypes.size != 1) continue
-                if (!m.name.contains("get", ignoreCase = true)) continue
-                metodos.add(m.name)
+                if (!m.parameterTypes[0].isAssignableFrom(Class::class.java)) continue
+                probados.add(m.name)
                 val valor = runCatching {
                     m.isAccessible = true
-                    m.invoke(injekt, Application::class.java)
+                    m.invoke(scope, Application::class.java)
                 }.getOrNull()
                 if (valor is Context) return valor
             }
             cls = cls.superclass
         }
-        notas.add("injekt:sin-ctx(${metodos.distinct().take(4).joinToString(",")})")
+        notas.add("injekt:scope-ok-sin-ctx(${probados.distinct().take(5).joinToString(",")})")
         return null
     }
 
